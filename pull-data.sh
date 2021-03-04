@@ -12,7 +12,7 @@ build_number="$(cut -db -f2 <<< "$tag_name")"
 echo "Fetching source for build $build_number..."
 
 mkdir -p "data/$build_number/src" && cd "data/$build_number/src"
-curl -sL "$tarball_url" | tar xv --strip-components=1
+curl -sL "$tarball_url" | tar xvz --strip-components=1
 
 echo "Collating JSON..."
 
