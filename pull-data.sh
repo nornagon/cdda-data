@@ -5,20 +5,24 @@ echo "Fetching release list..."
 
 release_json="$(curl -sL https://api.github.com/repos/CleverRaven/Cataclysm-DDA/releases)"
 
-tarball_url="$(jq -r '.[0].tarball_url' <<< "$release_json")"
-tag_name="$(jq -r '.[0].tag_name' <<< "$release_json")"
-build_number="$(cut -db -f2 <<< "$tag_name")"
+for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
+  tarball_url="$(jq -r ".[$i].tarball_url" <<< "$release_json")"
+  tag_name="$(jq -r ".[$i].tag_name" <<< "$release_json")"
+  build_number="$(cut -db -f2 <<< "$tag_name")"
 
-echo "Fetching source for build $build_number..."
+  if [ ! -f "data/$build_number/all.json" ]; then
+    echo "Fetching source for build $build_number..."
+    mkdir -p "data/$build_number/src" && cd "data/$build_number/src"
+    curl -sL "$tarball_url" | tar xvz --strip-components=1 --include '*/data/json/*'
 
-mkdir -p "data/$build_number/src" && cd "data/$build_number/src"
-curl -sL "$tarball_url" | tar xvz --strip-components=1
+    echo "Collating JSON..."
 
-echo "Collating JSON..."
+    jq -c '[.[]]' data/json/**/*.json > ../all.json
 
-jq -c '[.[]]' data/json/**/*.json > ../all.json
+    echo "Cleaning up..."
 
-echo "Cleaning up..."
-
-cd ..
-rm -rf src
+    cd ..
+    rm -rf src
+    cd ../..
+  fi
+done
