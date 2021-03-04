@@ -1,0 +1,17 @@
+name: Pull Cataclysm-DDA data
+
+on:
+  schedule:
+    - cron: "30 1 * * *"
+
+jobs:
+  pull-data:
+    name: Pull Cataclysm-DDA data
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - run: sudo apt-get install jq
+
+      - run: ./pull-data.sh
