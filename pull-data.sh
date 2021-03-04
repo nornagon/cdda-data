@@ -17,7 +17,7 @@ for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
 
     echo "Collating JSON..."
 
-    jq -c '[.[]]' data/json/**/*.json > ../all.json
+    jq -c '[inputs | .[]]' data/json/**/*.json > ../all.json
 
     echo "Cleaning up..."
 
