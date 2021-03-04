@@ -5,6 +5,8 @@ echo "Fetching release list..."
 
 release_json="$(curl -sL https://api.github.com/repos/CleverRaven/Cataclysm-DDA/releases)"
 
+echo '{"latest_build":"'$(jq -r '.[0].tag_name' <<< "$release_json" | cut -db -f2)'"}' > latest-build.json
+
 for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
   tarball_url="$(jq -r ".[$i].tarball_url" <<< "$release_json")"
   tag_name="$(jq -r ".[$i].tag_name" <<< "$release_json")"
