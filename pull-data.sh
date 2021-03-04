@@ -6,7 +6,7 @@ echo "Fetching release list..."
 release_json="$(curl -sL https://api.github.com/repos/CleverRaven/Cataclysm-DDA/releases)"
 
 latest_build_number="$(jq -r '.[0].tag_name' <<< "$release_json" | cut -db -f2)"
-echo '{"latest_build":"'"$latest_build_number"'"}' > latest-build.json
+echo '{latest_build:"'"$latest_build_number"'"}' > latest-build.json
 
 for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
   tarball_url="$(jq -r ".[$i].tarball_url" <<< "$release_json")"
@@ -20,7 +20,7 @@ for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
 
     echo "Collating JSON..."
 
-    jq -c '[inputs | .[]]' data/json/**/*.json > ../all.json
+    jq -n -c '{build_number: "'"$build_number"'", release: input['"$i"'], data: [inputs | .[]]}' /dev/stdin data/json/**/*.json <<< "$release_json" > ../all.json
 
     echo "Cleaning up..."
 
@@ -31,4 +31,4 @@ for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
 done
 
 mkdir -p data/latest
-ln data/"$latest_build_number"/all.json data/latest/all.json
+ln -f data/"$latest_build_number"/all.json data/latest/all.json
