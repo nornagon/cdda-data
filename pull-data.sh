@@ -13,7 +13,7 @@ for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
   if [ ! -f "data/$build_number/all.json" ]; then
     echo "Fetching source for build $build_number..."
     mkdir -p "data/$build_number/src" && cd "data/$build_number/src"
-    curl -sL "$tarball_url" | tar xvz --strip-components=1 --include '*/data/json/*'
+    curl -sL "$tarball_url" | tar xz --strip-components=1
 
     echo "Collating JSON..."
 
