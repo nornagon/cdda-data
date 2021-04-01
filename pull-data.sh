@@ -9,7 +9,10 @@ latest_build_number="$(jq -r '.[0].tag_name' <<< "$release_json" | cut -db -f2)"
 echo '{"latest_build":"'"$latest_build_number"'"}' > latest-build.json
 
 for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
-  tarball_url="$(jq -r ".[$i].tarball_url" <<< "$release_json")"
+  # .tarball_url exists in the api response, but it's not urlencoded so it
+  # 400s if there are non-ascii chars. hack around it by constructing the
+  # tarball url manually and urlencoding the tag name.
+  tarball_url="$(jq -r '@uri "https://api.github.com/repos/CleverRaven/Cataclysm-DDA/tarball/\(.['"$i"'].tag_name)"' <<< "$release_json")"
   tag_name="$(jq -r ".[$i].tag_name" <<< "$release_json")"
   build_number="$(cut -db -f2 <<< "$tag_name")"
 
