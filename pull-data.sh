@@ -15,7 +15,7 @@ for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
   tarball_url="$(jq -r '@uri "https://api.github.com/repos/CleverRaven/Cataclysm-DDA/tarball/\(.['"$i"'].tag_name)"' <<< "$release_json")"
   tag_name="$(jq -r ".[$i].tag_name" <<< "$release_json")"
   build_number="$(cut -db -f2 <<< "$tag_name")"
-  if [ 'cdda-experimental-2021-07-09-1837' = "$tag_name" ]; then  # this release had broken json
+  if [ 'cdda-experimental-2021-07-09-1837' = "$build_number" ]; then  # this release had broken json
     continue
   fi
 
