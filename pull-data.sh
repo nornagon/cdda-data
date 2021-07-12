@@ -18,6 +18,9 @@ for i in {0..$(jq -r 'length - 1' <<< "$release_json")}; do
   if [ 'cdda-experimental-2021-07-09-1837' = "$build_number" ]; then  # this release had broken json
     continue
   fi
+  if [ 'cdda-experimental-2021-07-09-1719' = "$build_number" ]; then
+    continue
+  fi
 
   if [ ! -f "data/$build_number/all.json" ]; then
     echo "Fetching source for build $build_number..."
