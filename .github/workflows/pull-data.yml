@@ -1,0 +1,39 @@
+name: Pull Cataclysm-DDA data
+
+on:
+  schedule:
+    - cron: '40 */12 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  pull-data:
+    name: Pull Cataclysm-DDA data
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@70f0831dd93a33fae14b2c04ec77e6adb632806f
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-haskell: 'true'
+          remove-android: 'true'
+
+      - name: Measure disk space
+        run: df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Measure disk space
+        run: df -h
+
+      - run: yarn
+      - run: npx zx pull-data.mjs
+      - run: |
+          git config --global user.name 'HHG2C Update Bot'
+          git config --global user.email 'hhg2c@users.noreply.github.com'
+          git add data builds.json latest-build.json
+          git commit -a --amend -m "Update data for $(jq .latest_build latest-build.json)" && git push -f || true
+          echo Free space:
+          df -h
