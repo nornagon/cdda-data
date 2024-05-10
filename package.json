@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "JSONStream": "^1.3.5",
+    "gettext.js": "^1.2.0",
+    "pinyin": "^3.0.0-alpha.5",
+    "zx": "^7.0.8"
+  }
+}
