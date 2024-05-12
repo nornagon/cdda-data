@@ -259,8 +259,6 @@ export default async function run({ github, context }) {
         created_at: release.created_at,
         langs,
       });
-    } catch (e) {
-      console.error(`Error while processing ${tag_name}:`, e);
     } finally {
       console.groupEnd();
     }
