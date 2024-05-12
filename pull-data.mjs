@@ -117,6 +117,7 @@ export default async function run({ github, context }) {
    * @param {string | Buffer} content
    */
   async function createBlob(path, content) {
+    console.log(`Creating blob at ${path}...`)
     const blob =
       typeof content === "string"
         ? await retry(() => github.rest.git.createBlob({
@@ -211,6 +212,8 @@ export default async function run({ github, context }) {
           data.push(obj);
         }
       }
+
+      console.log(`Found ${data.length} objects.`)
 
       const all = {
         build_number: tag_name,
