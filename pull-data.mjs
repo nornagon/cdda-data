@@ -145,7 +145,6 @@ export default async function run({ github, context }) {
   async function copyBlob(fromPath, toPath) {
     const existingBlob = blobs.find((b) => b.path === fromPath);
     if (!existingBlob) {
-      console.dir(blobs, { depth: 10 });
       throw new Error(`Blob not found: ${fromPath}`);
     }
     blobs.push({
