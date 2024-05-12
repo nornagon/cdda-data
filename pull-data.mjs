@@ -309,7 +309,7 @@ export default async function run({ github, context }) {
   console.log("Creating commit...");
   const { data: commit } = await github.rest.git.createCommit({
     ...context.repo,
-    message: `Update data for ${builds[builds.length - 1].build_number}`,
+    message: `Update data for ${builds[0].build_number}`,
     tree: tree.sha,
     parents: [baseCommit.sha],
     author: {
