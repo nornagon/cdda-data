@@ -119,16 +119,16 @@ export default async function run({ github, context }) {
   async function createBlob(path, content) {
     const blob =
       typeof content === "string"
-        ? await github.rest.git.createBlob({
+        ? await retry(() => github.rest.git.createBlob({
             ...context.repo,
             content,
             encoding: "utf-8",
-          })
-        : await github.rest.git.createBlob({
+          }))
+        : await retry(() => github.rest.git.createBlob({
             ...context.repo,
             content: content.toString("base64"),
             encoding: "base64",
-          });
+          }));
     blobs.push({
       path,
       mode,
@@ -324,4 +324,17 @@ export default async function run({ github, context }) {
     ref: `heads/${dataBranch}`,
     sha: commit.sha,
   });
+}
+
+async function retry(fn, retries = 10) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      console.error("Error", e.message, "- retrying...");
+      // Wait an increasing amount of time between retries
+      await new Promise((r) => setTimeout(r, 1000 * i));
+    }
+  }
+  throw new Error("Max retries reached");
 }
