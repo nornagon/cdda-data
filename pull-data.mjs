@@ -267,6 +267,11 @@ export default async function run({ github, context }) {
     }
   }
 
+  if (newBuilds.length === 0) {
+    console.log("No new builds to process. We're done here.");
+    return;
+  }
+
   const builds = existingBuilds.concat(newBuilds);
 
   builds.sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -274,7 +279,7 @@ export default async function run({ github, context }) {
   console.log(`Writing ${builds.length} builds to builds.json...`);
   await createBlob("builds.json", JSON.stringify(builds));
 
-  const latestBuild = builds.find((b) => b.build_number === latestRelease);
+  const latestBuild = newBuilds.find((b) => b.build_number === latestRelease);
   if (latestBuild) {
     console.log(`Copying ${latestRelease} to latest...`);
     copyBlob(
