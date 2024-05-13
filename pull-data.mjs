@@ -181,90 +181,96 @@ export default async function run({ github, context }) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
     console.group(`Processing ${tag_name}...`);
-    try {
-      if (forbiddenTags.includes(tag_name)) {
-        console.log(`Skipping ${tag_name} because it's on the forbidden list.`);
-        continue;
+    if (forbiddenTags.includes(tag_name)) {
+      console.log(`Skipping ${tag_name} because it's on the forbidden list.`);
+      continue;
+    }
+
+    console.log(`Fetching source...`);
+
+    const { data: zip } = await github.rest.repos.downloadZipballArchive({
+      owner: "CleverRaven",
+      repo: "Cataclysm-DDA",
+      ref: tag_name,
+    });
+
+    console.log("Collating JSON...");
+
+    // @ts-ignore
+    const z = new AdmZip(Buffer.from(zip));
+
+    const data = [];
+    for (const f of globZip(z, "*/data/json/**/*.json")) {
+      // The zipball has a top-level directory that we want to ignore
+      const filename = f.entryName.split("/").slice(1).join("/");
+
+      // Break up the JSON into individual objects so we can inject line numbers
+      const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
+      for (const { obj, start, end } of objs) {
+        obj.__filename = filename + `#L${start}-L${end}`;
+        data.push(obj);
       }
+    }
 
-      console.log(`Fetching source...`);
+    console.log(`Found ${data.length} objects.`)
 
-      const { data: zip } = await github.rest.repos.downloadZipballArchive({
-        owner: "CleverRaven",
-        repo: "Cataclysm-DDA",
-        ref: tag_name,
-      });
+    const all = {
+      build_number: tag_name,
+      release,
+      data,
+    };
+    const allJson = JSON.stringify(all);
+    await createBlob(`${pathBase}/all.json`, allJson);
 
-      console.log("Collating JSON...");
+    // We upload a gzipped version of latest for boring GoogleBot reasons
+    // TODO: these should go in a separate branch to reduce the total size of the main branch
+    if (tag_name === latestRelease)
+      await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
 
-      // @ts-ignore
-      const z = new AdmZip(Buffer.from(zip));
+    console.group("Compiling lang JSON...");
 
-      const data = [];
-      for (const f of globZip(z, "*/data/json/**/*.json")) {
-        // The zipball has a top-level directory that we want to ignore
-        const filename = f.entryName.split("/").slice(1).join("/");
+    // Measure both CPU time and wall time
+    console.time("lang JSON");
+    const cpuUsage = process.cpuUsage();
+    const langs = await Promise.all(
+      [...globZip(z, "*/lang/po/*.po")].map(async (f) => {
+        const lang = path.basename(f.entryName, ".po");
+        const json = postprocessPoJson(po2json.parse(f.getData().toString("utf8")));
+        const jsonStr = JSON.stringify(json);
+        await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
+        if (tag_name === latestRelease)
+          await createBlob(
+            `data/latest.gz/lang/${lang}.json`,
+            zlib.gzipSync(jsonStr),
+          );
 
-        // Break up the JSON into individual objects so we can inject line numbers
-        const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
-        for (const { obj, start, end } of objs) {
-          obj.__filename = filename + `#L${start}-L${end}`;
-          data.push(obj);
-        }
-      }
-
-      console.log(`Found ${data.length} objects.`)
-
-      const all = {
-        build_number: tag_name,
-        release,
-        data,
-      };
-      const allJson = JSON.stringify(all);
-      await createBlob(`${pathBase}/all.json`, allJson);
-
-      // We upload a gzipped version of latest for boring GoogleBot reasons
-      // TODO: these should go in a separate branch to reduce the total size of the main branch
-      if (tag_name === latestRelease)
-        await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
-
-      console.log("Compiling lang JSON...");
-
-      const langs = await Promise.all(
-        [...globZip(z, "*/lang/po/*.po")].map(async (f) => {
-          const lang = path.basename(f.entryName, ".po");
-          const json = postprocessPoJson(po2json.parse(f.getData().toString("utf8")));
-          const jsonStr = JSON.stringify(json);
-          await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
+        // To support searching Chinese translations by pinyin
+        if (lang.startsWith("zh_")) {
+          const pinyin = toPinyin(data, json);
+          const pinyinStr = JSON.stringify(pinyin);
+          await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
           if (tag_name === latestRelease)
             await createBlob(
-              `data/latest.gz/lang/${lang}.json`,
-              zlib.gzipSync(jsonStr),
+              `data/latest.gz/lang/${lang}_pinyin.json`,
+              zlib.gzipSync(pinyinStr),
             );
-
-          // To support searching Chinese translations by pinyin
-          if (lang.startsWith("zh_")) {
-            const pinyin = toPinyin(data, json);
-            const pinyinStr = JSON.stringify(pinyin);
-            await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
-            if (tag_name === latestRelease)
-              await createBlob(
-                `data/latest.gz/lang/${lang}_pinyin.json`,
-                zlib.gzipSync(pinyinStr),
-              );
-          }
-          return lang;
-        }),
-      );
-      newBuilds.push({
-        build_number: tag_name,
-        prerelease: release.prerelease,
-        created_at: release.created_at,
-        langs,
-      });
-    } finally {
-      console.groupEnd();
-    }
+        }
+        return lang;
+      }),
+    );
+    console.timeEnd("lang JSON");
+    const newUsage = process.cpuUsage(cpuUsage);
+    console.log(
+      `CPU time: ${newUsage.user / 1e6}s user, ${newUsage.system / 1e6}s system`,
+    );
+    newBuilds.push({
+      build_number: tag_name,
+      prerelease: release.prerelease,
+      created_at: release.created_at,
+      langs,
+    });
+    console.groupEnd();
+    console.groupEnd();
   }
 
   if (newBuilds.length === 0) {
@@ -325,6 +331,7 @@ export default async function run({ github, context }) {
     ...context.repo,
     ref: `heads/${dataBranch}`,
     sha: commit.sha,
+    force: true,
   });
 }
 
