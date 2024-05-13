@@ -101,9 +101,9 @@ export default async function run({ github, context }) {
     repo: "Cataclysm-DDA",
   });
 
-  const latestRelease = releases[0].tag_name;
+  const latestRelease = releases.find(r => r.tag_name.startsWith("cdda-experimental-"))?.tag_name;
 
-  console.log(`Latest release: ${latestRelease}`);
+  console.log(`Latest experimental: ${latestRelease}`);
 
   const blobs = [];
   /** @type {'100644'} */
