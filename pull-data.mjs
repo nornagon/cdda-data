@@ -101,7 +101,9 @@ export default async function run({ github, context }) {
     repo: "Cataclysm-DDA",
   });
 
-  const latestRelease = releases.find(r => r.tag_name.startsWith("cdda-experimental-"))?.tag_name;
+  const latestRelease = releases.find((r) =>
+    r.tag_name.startsWith("cdda-experimental-"),
+  )?.tag_name;
 
   console.log(`Latest experimental: ${latestRelease}`);
 
@@ -117,19 +119,23 @@ export default async function run({ github, context }) {
    * @param {string | Buffer} content
    */
   async function createBlob(path, content) {
-    console.log(`Creating blob at ${path}...`)
+    console.log(`Creating blob at ${path}...`);
     const blob =
       typeof content === "string"
-        ? await retry(() => github.rest.git.createBlob({
-            ...context.repo,
-            content,
-            encoding: "utf-8",
-          }))
-        : await retry(() => github.rest.git.createBlob({
-            ...context.repo,
-            content: content.toString("base64"),
-            encoding: "base64",
-          }));
+        ? await retry(() =>
+            github.rest.git.createBlob({
+              ...context.repo,
+              content,
+              encoding: "utf-8",
+            }),
+          )
+        : await retry(() =>
+            github.rest.git.createBlob({
+              ...context.repo,
+              content: content.toString("base64"),
+              encoding: "base64",
+            }),
+          );
     blobs.push({
       path,
       mode,
@@ -212,7 +218,7 @@ export default async function run({ github, context }) {
       }
     }
 
-    console.log(`Found ${data.length} objects.`)
+    console.log(`Found ${data.length} objects.`);
 
     const all = {
       build_number: tag_name,
@@ -235,7 +241,9 @@ export default async function run({ github, context }) {
     const langs = await Promise.all(
       [...globZip(z, "*/lang/po/*.po")].map(async (f) => {
         const lang = path.basename(f.entryName, ".po");
-        const json = postprocessPoJson(po2json.parse(f.getData().toString("utf8")));
+        const json = postprocessPoJson(
+          po2json.parse(f.getData().toString("utf8")),
+        );
         const jsonStr = JSON.stringify(json);
         await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
         if (tag_name === latestRelease)
