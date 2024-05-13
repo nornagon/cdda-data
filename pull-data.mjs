@@ -90,8 +90,11 @@ function* globZip(zip, pattern) {
   }
 }
 
-/** @param {import('github-script').AsyncFunctionArguments} AsyncFunctionArguments */
-export default async function run({ github, context }) {
+/** @param {import('github-script').AsyncFunctionArguments & {dryRun?: boolean}} AsyncFunctionArguments */
+export default async function run({ github, context, dryRun = false }) {
+  if (dryRun) {
+    console.log("(DRY RUN) No changes will be made to the repository.");
+  }
   const dataBranch = "main";
 
   console.log("Fetching release list...");
@@ -114,28 +117,35 @@ export default async function run({ github, context }) {
   const type = "blob";
 
   /**
+   * @param {string | Buffer} content
+   */
+  async function uploadBlob(content) {
+    if (dryRun) return { data: { sha: "dry-run-sha" } };
+    return typeof content === "string"
+      ? await retry(() =>
+          github.rest.git.createBlob({
+            ...context.repo,
+            content,
+            encoding: "utf-8",
+          }),
+        )
+      : await retry(() =>
+          github.rest.git.createBlob({
+            ...context.repo,
+            content: content.toString("base64"),
+            encoding: "base64",
+          }),
+        );
+  }
+
+  /**
    * Upload a blob to GitHub and save it in our blob list for later tree creation.
    * @param {string} path
    * @param {string | Buffer} content
    */
   async function createBlob(path, content) {
     console.log(`Creating blob at ${path}...`);
-    const blob =
-      typeof content === "string"
-        ? await retry(() =>
-            github.rest.git.createBlob({
-              ...context.repo,
-              content,
-              encoding: "utf-8",
-            }),
-          )
-        : await retry(() =>
-            github.rest.git.createBlob({
-              ...context.repo,
-              content: content.toString("base64"),
-              encoding: "base64",
-            }),
-          );
+    const blob = await uploadBlob(content);
     blobs.push({
       path,
       mode,
@@ -309,6 +319,11 @@ export default async function run({ github, context }) {
     console.log(
       `Latest release (${latestRelease}) not in updated builds, skipping copy to latest.`,
     );
+  }
+
+  if (dryRun) {
+    console.log("(DRY RUN) skipping commit and push.");
+    return;
   }
 
   console.log("Creating tree...");
