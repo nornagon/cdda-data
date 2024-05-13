@@ -314,7 +314,6 @@ export default async function run({ github, context }) {
     ...context.repo,
     message: `Update data for ${builds[0].build_number}`,
     tree: tree.sha,
-    parents: [baseCommit.sha],
     author: {
       name: "HHG2C Update Bot",
       email: "hhg2c@users.noreply.github.com",
