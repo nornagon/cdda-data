@@ -243,6 +243,30 @@ export default async function run({ github, context, dryRun = false }) {
     if (tag_name === latestRelease)
       await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
 
+    const dataMods = {};
+    for (const f of globZip(z, "*/data/mods/*/**/*.json")) {
+      const filename = f.entryName.split("/").slice(1).join("/");
+      const modName = filename.split("/")[0];
+      dataMods[modName] ||= { modName, modinfo: null, data: [] };
+      const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
+      for (const { obj, start, end } of objs) {
+        obj.__mod = modName;
+        obj.__filename = filename + `#L${start}-L${end}`;
+        if (obj.type === "MOD_INFO") {
+          dataMods[modName].modinfo = obj;
+        } else {
+          dataMods[modName].data.push(obj);
+        }
+      }
+    }
+    const allMods = {
+      build_number: tag_name,
+      release,
+      dataMods, 
+    };
+    const allModsJson = JSON.stringify(allMods);
+    await createBlob(`${pathBase}/all_mods.json`, allModsJson);
+
     console.group("Compiling lang JSON...");
 
     // Measure both CPU time and wall time
