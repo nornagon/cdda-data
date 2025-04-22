@@ -246,7 +246,7 @@ export default async function run({ github, context, dryRun = false }) {
     const dataMods = {};
     for (const f of globZip(z, "*/data/mods/*/**/*.json")) {
       const filename = f.entryName.split("/").slice(1).join("/");
-      const modName = filename.split("/")[0];
+      const modName = filename.split("/")[2];
       dataMods[modName] ||= { modName, modinfo: null, data: [] };
       const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
       for (const { obj, start, end } of objs) {
