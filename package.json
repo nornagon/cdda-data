@@ -2,6 +2,7 @@
   "type": "module",
   "dependencies": {
     "gettext.js": "^1.2.0",
+    "glob": "^11.0.3",
     "pinyin": "^3.0.0-alpha.5"
   },
   "devDependencies": {

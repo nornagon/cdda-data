@@ -1,94 +1,12 @@
 // @ts-check
-import AdmZip from "adm-zip";
-import minimatch from "minimatch";
-import po2json from "po2json";
 import zlib from "zlib";
-import path from "path";
 
-import { toPinyin } from "./pinyin.mjs";
-
-function breakJSONIntoSingleObjects(str) {
-  const objs = [];
-  let depth = 0;
-  let line = 1;
-  let start = -1;
-  let startLine = -1;
-  let inString = false;
-  let inStringEscSequence = false;
-  for (let i = 0; i < str.length; i++) {
-    const c = str[i];
-    if (inString) {
-      if (inStringEscSequence) {
-        inStringEscSequence = false;
-      } else {
-        if (c === "\\") inStringEscSequence = true;
-        else if (c === '"') inString = false;
-      }
-    } else {
-      if (c === "{") {
-        if (depth === 0) {
-          start = i;
-          startLine = line;
-        }
-        depth++;
-      } else if (c === "}") {
-        depth--;
-        if (depth === 0) {
-          objs.push({
-            obj: JSON.parse(str.slice(start, i + 1)),
-            start: startLine,
-            end: line,
-          });
-        }
-      } else if (c === '"') {
-        inString = true;
-      } else if (c === "\n") {
-        line++;
-      }
-    }
-  }
-  return objs;
-}
-
-// copied from gettext.js/bin/po2json
-function postprocessPoJson(jsonData) {
-  const json = {};
-  for (const key in jsonData) {
-    // Special headers handling, we do not need everything
-    if ("" === key) {
-      json[""] = {
-        language: jsonData[""]["language"],
-        "plural-forms": jsonData[""]["plural-forms"],
-      };
-
-      continue;
-    }
-
-    // Do not dump untranslated keys, they already are in the templates!
-    if ("" !== jsonData[key][1])
-      json[key] =
-        2 === jsonData[key].length ? jsonData[key][1] : jsonData[key].slice(1);
-  }
-  return json;
-}
+import { build, globZip } from "./build-data.mjs";
 
 const forbiddenTags = [
   "cdda-experimental-2021-07-09-1837", // this release had broken json
   "cdda-experimental-2021-07-09-1719",
 ];
-
-/**
- * @param {AdmZip} zip
- * @param {string} pattern
- */
-function* globZip(zip, pattern) {
-  for (const f of zip.getEntries()) {
-    if (f.isDirectory) continue;
-    if (minimatch(f.entryName, pattern)) {
-      yield f;
-    }
-  }
-}
 
 /** @param {import('github-script').AsyncFunctionArguments & {dryRun?: boolean}} AsyncFunctionArguments */
 export default async function run({ github, context, dryRun = false }) {
@@ -213,105 +131,42 @@ export default async function run({ github, context, dryRun = false }) {
     console.log("Collating JSON...");
 
     // @ts-ignore
-    const z = new AdmZip(Buffer.from(zip));
-
-    const data = [];
-    for (const f of globZip(z, "*/data/json/**/*.json")) {
-      // The zipball has a top-level directory that we want to ignore
-      const filename = f.entryName.split("/").slice(1).join("/");
-
-      // Break up the JSON into individual objects so we can inject line numbers
-      const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
-      for (const { obj, start, end } of objs) {
-        obj.__filename = filename + `#L${start}-L${end}`;
-        data.push(obj);
-      }
-    }
-
-    console.log(`Found ${data.length} objects.`);
-
-    const all = {
+    const zBuf = Buffer.from(zip)
+  
+    const { allJson, allModsJson, langs } = await build(globZip(zBuf), {
       build_number: tag_name,
-      release,
-      data,
-    };
-    const allJson = JSON.stringify(all);
+      release: tag_name,
+    });
+
     await createBlob(`${pathBase}/all.json`, allJson);
+    await createBlob(`${pathBase}/all_mods.json`, allModsJson);
 
     // We upload a gzipped version of latest for boring GoogleBot reasons
     // TODO: these should go in a separate branch to reduce the total size of the main branch
-    if (tag_name === latestRelease)
+    if (tag_name === latestRelease) {
       await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
+      await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
+    }
 
-    const dataMods = {};
-    for (const f of globZip(z, "*/data/mods/*/**/*.json")) {
-      const filename = f.entryName.split("/").slice(1).join("/");
-      const modName = filename.split("/")[2];
-      dataMods[modName] ||= { modName, modinfo: null, data: [] };
-      const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
-      for (const { obj, start, end } of objs) {
-        obj.__mod = modName;
-        obj.__filename = filename + `#L${start}-L${end}`;
-        if (obj.type === "MOD_INFO") {
-          dataMods[modName].modinfo = obj;
-        } else {
-          dataMods[modName].data.push(obj);
+    await Promise.all(Object.entries(langs).map(async ([lang, { jsonStr, pinyinStr }]) => {
+      await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
+      if (pinyinStr) {
+        await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
+      }
+      if (tag_name === latestRelease) {
+        await createBlob(`data/latest.gz/lang/${lang}.json`,zlib.gzipSync(jsonStr));
+        if (pinyinStr) {
+          await createBlob(`data/latest.gz/lang/${lang}_pinyin.json`, zlib.gzipSync(pinyinStr));
         }
       }
-    }
-    const allMods = {
-      build_number: tag_name,
-      release,
-      dataMods, 
-    };
-    const allModsJson = JSON.stringify(allMods);
-    await createBlob(`${pathBase}/all_mods.json`, allModsJson);
+    }));
 
-    console.group("Compiling lang JSON...");
-
-    // Measure both CPU time and wall time
-    console.time("lang JSON");
-    const cpuUsage = process.cpuUsage();
-    const langs = await Promise.all(
-      [...globZip(z, "*/lang/po/*.po")].map(async (f) => {
-        const lang = path.basename(f.entryName, ".po");
-        const json = postprocessPoJson(
-          po2json.parse(f.getData().toString("utf8")),
-        );
-        const jsonStr = JSON.stringify(json);
-        await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
-        if (tag_name === latestRelease)
-          await createBlob(
-            `data/latest.gz/lang/${lang}.json`,
-            zlib.gzipSync(jsonStr),
-          );
-
-        // To support searching Chinese translations by pinyin
-        if (lang.startsWith("zh_")) {
-          const pinyin = toPinyin(data, json);
-          const pinyinStr = JSON.stringify(pinyin);
-          await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
-          if (tag_name === latestRelease)
-            await createBlob(
-              `data/latest.gz/lang/${lang}_pinyin.json`,
-              zlib.gzipSync(pinyinStr),
-            );
-        }
-        return lang;
-      }),
-    );
-    console.timeEnd("lang JSON");
-    const newUsage = process.cpuUsage(cpuUsage);
-    console.log(
-      `CPU time: ${newUsage.user / 1e6}s user, ${newUsage.system / 1e6}s system`,
-    );
     newBuilds.push({
       build_number: tag_name,
       prerelease: release.prerelease,
       created_at: release.created_at,
-      langs,
+      langs: Object.keys(langs),
     });
-    console.groupEnd();
     console.groupEnd();
   }
 
