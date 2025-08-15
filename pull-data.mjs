@@ -128,14 +128,12 @@ export default async function run({ github, context, dryRun = false }) {
       ref: tag_name,
     });
 
-    console.log("Collating JSON...");
-
     // @ts-ignore
     const zBuf = Buffer.from(zip)
   
     const { allJson, allModsJson, langs } = await build(globZip(zBuf), {
       build_number: tag_name,
-      release: tag_name,
+      release,
     });
 
     await createBlob(`${pathBase}/all.json`, allJson);

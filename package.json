@@ -1,5 +1,8 @@
 {
   "type": "module",
+  "scripts": {
+    "pull": "node pull-data.mjs"
+  },
   "dependencies": {
     "gettext.js": "^1.2.0",
     "glob": "^11.0.3",

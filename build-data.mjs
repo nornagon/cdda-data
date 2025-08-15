@@ -110,12 +110,14 @@ export function globDir(dir) {
     return glob
 }
 
+/** @typedef {Awaited<ReturnType<import('github-script').AsyncFunctionArguments['github']['rest']['repos']['listReleases']>>['data'][number]} Release */
+
 /**
  * @param {(pattern: string) => Generator<{
  *  name: string,
  *  data: string
  * }>} globFn 
- * @param {{build_number: string, release: string}} options 
+ * @param {{build_number: string, release: Release}} options 
  * @returns {Promise<{
  *  allJson: string,
  *  allModsJson: string,
@@ -124,6 +126,7 @@ export function globDir(dir) {
  */
 export async function build(globFn, options) {
 
+  console.log("Collating base JSON...");
 
     const data = [];
     for (const f of globFn("data/json/**/*.json")) {
@@ -144,6 +147,7 @@ export async function build(globFn, options) {
     }
     const allJson = JSON.stringify(all)
 
+    console.log("Collating base JSON...");
 
     const dataMods = {};
     for (const f of globFn("data/mods/*/**/*.json")) {
@@ -161,6 +165,9 @@ export async function build(globFn, options) {
         }
       }
     }
+
+    console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
+
     const allMods = {
       build_number: options.build_number,
       release: options.release,
