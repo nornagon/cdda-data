@@ -85,7 +85,7 @@ export async function parse(globFn) {
     console.group("Collating base JSON...");
     const data = [];
     for (const f of globFn("data/json/**/*.json")) {
-        const filename = f.name
+        const filename = f.name.replaceAll("\\", "/");
         const objs = breakJSONIntoSingleObjects(f.data)
         for (const { obj, start, end } of objs) {
             obj.__filename = filename + `#L${start}-L${end}`;
