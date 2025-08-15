@@ -1,7 +1,7 @@
 // @ts-check
 import zlib from "zlib";
 
-import { build, globZip } from "./build-data.mjs";
+import { parse } from "./parser/zip-parser.mjs";
 
 const forbiddenTags = [
   "cdda-experimental-2021-07-09-1837", // this release had broken json
@@ -131,10 +131,15 @@ export default async function run({ github, context, dryRun = false }) {
     // @ts-ignore
     const zBuf = Buffer.from(zip)
   
-    const { allJson, allModsJson, langs } = await build(globZip(zBuf), {
+    const { data, dataMods, langs } = await parse(zBuf);
+
+    const allJson = JSON.stringify({
       build_number: tag_name,
       release,
-    });
+      data,
+    })
+
+    const allModsJson = JSON.stringify(dataMods)
 
     await createBlob(`${pathBase}/all.json`, allJson);
     await createBlob(`${pathBase}/all_mods.json`, allModsJson);
@@ -146,14 +151,16 @@ export default async function run({ github, context, dryRun = false }) {
       await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
     }
 
-    await Promise.all(Object.entries(langs).map(async ([lang, { jsonStr, pinyinStr }]) => {
+    await Promise.all(Object.entries(langs).map(async ([lang, { json, pinyin }]) => {
+      const jsonStr = JSON.stringify(json);
       await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
-      if (pinyinStr) {
-        await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
-      }
       if (tag_name === latestRelease) {
         await createBlob(`data/latest.gz/lang/${lang}.json`,zlib.gzipSync(jsonStr));
-        if (pinyinStr) {
+      }
+      if (pinyin) {
+        const pinyinStr = JSON.stringify(pinyin);
+        await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
+        if (tag_name === latestRelease) {
           await createBlob(`data/latest.gz/lang/${lang}_pinyin.json`, zlib.gzipSync(pinyinStr));
         }
       }

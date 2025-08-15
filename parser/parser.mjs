@@ -1,10 +1,6 @@
 // @ts-check
-import AdmZip from "adm-zip";
-import minimatch from "minimatch";
-import { Glob } from "glob";
 import po2json from "po2json";
 import path from "path";
-import fs from "fs";
 
 import { toPinyin } from "./pinyin.mjs";
 
@@ -73,61 +69,20 @@ function postprocessPoJson(jsonData) {
     return json;
 }
 
-/** @param {string | Buffer} zip */
-export function globZip(zip) {
-    const z = new AdmZip(zip)
-    /** @param {string} pattern */
-    function* glob(pattern) {
-        for (const f of z.getEntries()) {
-            if (f.isDirectory) continue
-            if (minimatch(f.entryName, `*/${pattern}`)) {
-                yield {
-                    name: f.entryName.split("/").slice(1).join("/"),
-                    data: f.getData().toString("utf8"),
-                }
-            }
-        }
-    }
-    return glob
-}
-
-/** @param {string} dir */
-export function globDir(dir) {
-    const g1 = new Glob("", {
-        cwd: dir,
-        nodir: true,
-    })
-    /** @param {string} pattern */
-    function* glob(pattern) {
-        const g = new Glob(pattern, g1)
-        for (const f of g) {
-            yield {
-                name: f,
-                data: fs.readFileSync(path.join(dir, f), "utf8"),
-            }
-        }
-    }
-    return glob
-}
-
-/** @typedef {Awaited<ReturnType<import('github-script').AsyncFunctionArguments['github']['rest']['repos']['listReleases']>>['data'][number]} Release */
-
 /**
  * @param {(pattern: string) => Generator<{
  *  name: string,
  *  data: string
  * }>} globFn 
- * @param {{build_number: string, release: Release}} options 
  * @returns {Promise<{
- *  allJson: string,
- *  allModsJson: string,
- *  langs: Record<string, { jsonStr: string, pinyinStr: string | null }>
+ *  data: any[],
+ *  dataMods: Record<string, { info: any, data: any[] }>,
+ *  langs: Record<string, { json: any, pinyin: any | null }>
  * }>}
  */
-export async function build(globFn, options) {
+export async function parse(globFn) {
 
-  console.log("Collating base JSON...");
-
+    console.group("Collating base JSON...");
     const data = [];
     for (const f of globFn("data/json/**/*.json")) {
         const filename = f.name
@@ -137,76 +92,74 @@ export async function build(globFn, options) {
             data.push(obj);
         }
     }
-
     console.log(`Found ${data.length} objects.`);
 
-    const all = {
-        build_number: options.build_number,
-        release: options.release,
-        data,
-    }
-    const allJson = JSON.stringify(all)
-
-    console.log("Collating base JSON...");
-
+    console.group("Collating mods JSON...");
+    /** @type {Record<string, { info: any, data: any[] }>} */
     const dataMods = {};
     for (const f of globFn("data/mods/*/**/*.json")) {
-      const filename = f.name
-      const modName = filename.split("/")[2];
-      dataMods[modName] ||= { modName, modinfo: null, data: [] };
+      const filename = f.name.replaceAll("\\", "/");
+      const name = filename.split("/")[2];
+      dataMods[name] ||= { info: null, data: [] };
       const objs = breakJSONIntoSingleObjects(f.data);
       for (const { obj, start, end } of objs) {
-        obj.__mod = modName;
+        obj.__mod = name;
         obj.__filename = filename + `#L${start}-L${end}`;
         if (obj.type === "MOD_INFO") {
-          dataMods[modName].modinfo = obj;
+          dataMods[name].info = obj;
         } else {
-          dataMods[modName].data.push(obj);
+          dataMods[name].data.push(obj);
         }
       }
     }
-
     console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
-
-    const allMods = {
-      build_number: options.build_number,
-      release: options.release,
-      data: dataMods,
-    }
-    const allModsJson = JSON.stringify(allMods)
 
 
     console.group("Compiling lang JSON...");
     console.time("lang JSON");
     const cpuUsage = process.cpuUsage();
-    const langs = Object.fromEntries(await Promise.all(
+    let langs = Object.fromEntries(await Promise.all(
       [...globFn("lang/po/*.po")].map(async (f) => {
         const lang = path.basename(f.name, ".po");
         const json = postprocessPoJson(
           po2json.parse(f.data),
         );
-        const jsonStr = JSON.stringify(json);
 
         // To support searching Chinese translations by pinyin
-        let pinyinStr = null;
+        let pinyin = null;
         if (lang.startsWith("zh_")) {
-          const pinyin = toPinyin(data, json);
-          pinyinStr = JSON.stringify(pinyin);
+          pinyin = toPinyin(data, json);
         }
-        return [lang, { jsonStr, pinyinStr }];
+        return [lang, { json, pinyin }];
       }),
     ))
+    if (Object.keys(langs).length === 0) {
+      langs = Object.fromEntries(await Promise.all(
+        [...globFn("lang/mo/**/*.mo")].map(async (f) => {
+          const lang = f.name.split(/[\\/]/)[2]
+          const json = postprocessPoJson(
+            po2json.parse(f.data)
+          );
+          let pinyin = null;
+          if (lang.startsWith("zh_")) {
+            pinyin = toPinyin(data, json);
+          }
+          return [lang, { json, pinyin }];
+        }),
+      ))
+    }
     console.timeEnd("lang JSON");
     const newUsage = process.cpuUsage(cpuUsage);
     console.log(
       `CPU time: ${newUsage.user / 1e6}s user, ${newUsage.system / 1e6}s system`,
     );
+    console.log(`Found ${Object.keys(langs).length} languages.`);
     console.groupEnd();
 
 
     return {
-        allJson,
-        allModsJson,
+        data,
+        dataMods,
         langs,
     }
 }
