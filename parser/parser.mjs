@@ -77,7 +77,7 @@ function postprocessPoJson(jsonData) {
  * @returns {Promise<{
  *  data: any[],
  *  dataMods: Record<string, { info: any, data: any[] }>,
- *  langs: Record<string, { json: any, pinyin: any | null }>
+ *  langs: Record<string, { jsonStr: string, pinyinStr: string | null }>
  * }>}
  */
 export async function parse(globFn) {
@@ -126,13 +126,14 @@ export async function parse(globFn) {
         const json = postprocessPoJson(
           po2json.parse(f.data()),
         );
+        const jsonStr = JSON.stringify(json);
 
         // To support searching Chinese translations by pinyin
-        let pinyin = null;
+        let pinyinStr = null;
         if (lang.startsWith("zh_")) {
-          pinyin = toPinyin(data, json);
+          pinyinStr = JSON.stringify(toPinyin(data, json));
         }
-        return [lang, { json, pinyin }];
+        return [lang, { jsonStr, pinyinStr }];
       }),
     ))
     if (Object.keys(langs).length === 0) {
@@ -142,11 +143,12 @@ export async function parse(globFn) {
           const json = postprocessPoJson(
             po2json.parse(f.data())
           );
-          let pinyin = null;
+          const jsonStr = JSON.stringify(json);
+          let pinyinStr = null;
           if (lang.startsWith("zh_")) {
-            pinyin = toPinyin(data, json);
+            pinyinStr = JSON.stringify(toPinyin(data, json));
           }
-          return [lang, { json, pinyin }];
+          return [lang, { jsonStr, pinyinStr }];
         }),
       ))
     }

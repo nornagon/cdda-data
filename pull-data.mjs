@@ -151,14 +151,12 @@ export default async function run({ github, context, dryRun = false }) {
       await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
     }
 
-    await Promise.all(Object.entries(langs).map(async ([lang, { json, pinyin }]) => {
-      const jsonStr = JSON.stringify(json);
+    await Promise.all(Object.entries(langs).map(async ([lang, { jsonStr, pinyinStr }]) => {
       await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
       if (tag_name === latestRelease) {
         await createBlob(`data/latest.gz/lang/${lang}.json`,zlib.gzipSync(jsonStr));
       }
-      if (pinyin) {
-        const pinyinStr = JSON.stringify(pinyin);
+      if (pinyinStr) {
         await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
         if (tag_name === latestRelease) {
           await createBlob(`data/latest.gz/lang/${lang}_pinyin.json`, zlib.gzipSync(pinyinStr));

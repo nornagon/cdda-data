@@ -24,9 +24,9 @@ fs.mkdirSync(outputDir, { recursive: true })
 fs.writeFileSync(path.join(outputDir, "all.json"), allJson)
 fs.writeFileSync(path.join(outputDir, "all_mods.json"), allModsJson)
 fs.mkdirSync(path.join(outputDir, "lang"), { recursive: true })
-for (const [lang, { json, pinyin }] of Object.entries(langs)) {
-  fs.writeFileSync(path.join(outputDir, `lang/${lang}.json`), JSON.stringify(json))
-  if (pinyin) {
-    fs.writeFileSync(path.join(outputDir, `lang/${lang}_pinyin.json`), JSON.stringify(pinyin))
+for (const [lang, { jsonStr, pinyinStr }] of Object.entries(langs)) {
+  fs.writeFileSync(path.join(outputDir, `lang/${lang}.json`), jsonStr)
+  if (pinyinStr) {
+    fs.writeFileSync(path.join(outputDir, `lang/${lang}_pinyin.json`), pinyinStr)
   }
 }
