@@ -110,7 +110,6 @@ export async function parse(globFn) {
         const objs = breakJSONIntoSingleObjects(f.data());
         for (const { obj, start, end } of objs) {
           if (obj.type === "MOD_INFO") continue;
-          obj.__mod = modname;
           obj.__filename = filename + `#L${start}-L${end}`;
           dataMods[modname].data.push(obj);
         }
