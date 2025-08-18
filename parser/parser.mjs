@@ -98,18 +98,21 @@ export async function parse(globFn) {
     console.group("Collating mods JSON...");
     /** @type {Record<string, { info: any, data: any[] }>} */
     const dataMods = {};
-    for (const f of globFn("data/mods/*/**/*.json")) {
-      const filename = f.name.replaceAll("\\", "/");
-      const name = filename.split("/")[2];
-      dataMods[name] ||= { info: null, data: [] };
-      const objs = breakJSONIntoSingleObjects(f.data());
-      for (const { obj, start, end } of objs) {
-        obj.__mod = name;
-        obj.__filename = filename + `#L${start}-L${end}`;
-        if (obj.type === "MOD_INFO") {
-          dataMods[name].info = obj;
-        } else {
-          dataMods[name].data.push(obj);
+    for (const i of globFn("data/mods/*/modinfo.json")) {
+      const modname = i.name.replaceAll("\\", "/").split("/")[2];
+      const modinfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
+      if (!modinfo || modinfo.obsolete) {
+        continue;
+      }
+      dataMods[modname] = { info: modinfo, data: [] };
+      for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
+        const filename = f.name.replaceAll("\\", "/");
+        const objs = breakJSONIntoSingleObjects(f.data());
+        for (const { obj, start, end } of objs) {
+          if (obj.type === "MOD_INFO") continue;
+          obj.__mod = modname;
+          obj.__filename = filename + `#L${start}-L${end}`;
+          dataMods[modname].data.push(obj);
         }
       }
     }
