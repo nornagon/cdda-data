@@ -99,13 +99,14 @@ export async function parse(globFn) {
     /** @type {Record<string, { info: any, data: any[] }>} */
     const dataMods = {};
     for (const i of globFn("data/mods/*/modinfo.json")) {
+      const modname = i.name.replaceAll("\\", "/").split("/")[2];
       const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
       if (!modInfo || modInfo.obsolete) {
         continue;
       }
       const modId = modInfo.id;
       dataMods[modId] = { info: modInfo, data: [] };
-      for (const f of globFn(`data/mods/${modId}/**/*.json`)) {
+      for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
         const filename = f.name.replaceAll("\\", "/");
         const objs = breakJSONIntoSingleObjects(f.data());
         for (const { obj, start, end } of objs) {
