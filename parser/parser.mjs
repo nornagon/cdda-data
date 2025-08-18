@@ -72,7 +72,7 @@ function postprocessPoJson(jsonData) {
 /**
  * @param {(pattern: string) => Generator<{
  *  name: string,
- *  data: string
+ *  data: () => string
  * }>} globFn 
  * @returns {Promise<{
  *  data: any[],
@@ -86,7 +86,7 @@ export async function parse(globFn) {
     const data = [];
     for (const f of globFn("data/json/**/*.json")) {
         const filename = f.name.replaceAll("\\", "/");
-        const objs = breakJSONIntoSingleObjects(f.data)
+        const objs = breakJSONIntoSingleObjects(f.data())
         for (const { obj, start, end } of objs) {
             obj.__filename = filename + `#L${start}-L${end}`;
             data.push(obj);
@@ -102,7 +102,7 @@ export async function parse(globFn) {
       const filename = f.name.replaceAll("\\", "/");
       const name = filename.split("/")[2];
       dataMods[name] ||= { info: null, data: [] };
-      const objs = breakJSONIntoSingleObjects(f.data);
+      const objs = breakJSONIntoSingleObjects(f.data());
       for (const { obj, start, end } of objs) {
         obj.__mod = name;
         obj.__filename = filename + `#L${start}-L${end}`;
@@ -124,7 +124,7 @@ export async function parse(globFn) {
       [...globFn("lang/po/*.po")].map(async (f) => {
         const lang = path.basename(f.name, ".po");
         const json = postprocessPoJson(
-          po2json.parse(f.data),
+          po2json.parse(f.data()),
         );
 
         // To support searching Chinese translations by pinyin
@@ -140,7 +140,7 @@ export async function parse(globFn) {
         [...globFn("lang/mo/**/*.mo")].map(async (f) => {
           const lang = f.name.split(/[\\/]/)[2]
           const json = postprocessPoJson(
-            po2json.parse(f.data)
+            po2json.parse(f.data())
           );
           let pinyin = null;
           if (lang.startsWith("zh_")) {

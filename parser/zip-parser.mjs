@@ -21,7 +21,7 @@ function glob(zip) {
             if (minimatch(f.entryName, `*/${pattern}`)) {
                 yield {
                     name: f.entryName.split("/").slice(1).join("/"),
-                    data: f.getData().toString("utf8"),
+                    data: () => f.getData().toString("utf8"),
                 }
             }
         }

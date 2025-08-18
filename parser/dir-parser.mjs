@@ -26,8 +26,8 @@ function glob(dir) {
             yield {
                 name: f,
                 data: f.endsWith(".mo") ?
-                    po.compile(mo.parse(fs.readFileSync(path.join(dir, f)))).toString("utf8") :
-                    fs.readFileSync(path.join(dir, f), "utf8"),
+                    () => po.compile(mo.parse(fs.readFileSync(path.join(dir, f)))).toString("utf8") :
+                    () => fs.readFileSync(path.join(dir, f), "utf8"),
             }
         }
     }
