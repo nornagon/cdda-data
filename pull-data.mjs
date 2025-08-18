@@ -192,6 +192,10 @@ export default async function run({ github, context, dryRun = false }) {
       `data/${latestBuild.build_number}/all.json`,
       "data/latest/all.json",
     );
+    copyBlob(
+      `data/${latestBuild.build_number}/all_mods.json`,
+      "data/latest/all_mods.json",
+    );
     for (const lang of latestBuild.langs)
       copyBlob(
         `data/${latestBuild.build_number}/lang/${lang}.json`,
