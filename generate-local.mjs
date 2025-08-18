@@ -17,6 +17,7 @@ const allJson = JSON.stringify({
   build_number: "local",
   release: "local",
   data,
+  modlist: Object.keys(dataMods),
 })
 const allModsJson = JSON.stringify(dataMods)
 
