@@ -99,19 +99,19 @@ export async function parse(globFn) {
     /** @type {Record<string, { info: any, data: any[] }>} */
     const dataMods = {};
     for (const i of globFn("data/mods/*/modinfo.json")) {
-      const modname = i.name.replaceAll("\\", "/").split("/")[2];
-      const modinfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
-      if (!modinfo || modinfo.obsolete) {
+      const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
+      if (!modInfo || modInfo.obsolete) {
         continue;
       }
-      dataMods[modname] = { info: modinfo, data: [] };
-      for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
+      const modId = modInfo.id;
+      dataMods[modId] = { info: modInfo, data: [] };
+      for (const f of globFn(`data/mods/${modId}/**/*.json`)) {
         const filename = f.name.replaceAll("\\", "/");
         const objs = breakJSONIntoSingleObjects(f.data());
         for (const { obj, start, end } of objs) {
           if (obj.type === "MOD_INFO") continue;
           obj.__filename = filename + `#L${start}-L${end}`;
-          dataMods[modname].data.push(obj);
+          dataMods[modId].data.push(obj);
         }
       }
     }
