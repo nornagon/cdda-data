@@ -93,6 +93,7 @@ export async function parse(globFn) {
         }
     }
     console.log(`Found ${data.length} objects.`);
+    console.groupEnd();
 
     console.group("Collating mods JSON...");
     /** @type {Record<string, { info: any, data: any[] }>} */
@@ -113,6 +114,7 @@ export async function parse(globFn) {
       }
     }
     console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
+    console.groupEnd();
 
 
     console.group("Compiling lang JSON...");
