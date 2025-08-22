@@ -137,7 +137,7 @@ export default async function run({ github, context, dryRun = false }) {
       build_number: tag_name,
       release,
       data,
-      modlist: Object.keys(dataMods),
+      modlist: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
     })
 
     const allModsJson = JSON.stringify(dataMods)

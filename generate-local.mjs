@@ -17,7 +17,7 @@ const allJson = JSON.stringify({
   build_number: "local",
   release: "local",
   data,
-  modlist: Object.keys(dataMods),
+  modlist: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
 })
 const allModsJson = JSON.stringify(dataMods)
 
