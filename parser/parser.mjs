@@ -100,6 +100,7 @@ export async function parse(globFn) {
     const dataMods = {};
     for (const i of globFn("data/mods/*/modinfo.json")) {
       const modname = i.name.replaceAll("\\", "/").split("/")[2];
+      if (modname === "dda") continue;
       const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
       if (!modInfo || modInfo.obsolete) {
         continue;
