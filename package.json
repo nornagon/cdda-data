@@ -1,16 +1,10 @@
 {
   "type": "module",
-  "scripts": {
-    "generate-local": "node generate-local.mjs"
-  },
   "dependencies": {
-    "gettext-parser": "^8.0.0",
     "gettext.js": "^1.2.0",
-    "glob": "^11.0.3",
     "pinyin": "^3.0.0-alpha.5"
   },
   "devDependencies": {
-    "@types/gettext-parser": "^8.0.0",
     "@types/github-script": "github:actions/github-script",
     "adm-zip": "^0.5.12",
     "octokit": "^4.0.2"

@@ -1,12 +1,99 @@
 // @ts-check
+import AdmZip from "adm-zip";
+import minimatch from "minimatch";
+import po2json from "po2json";
 import zlib from "zlib";
+import path from "path";
 
-import { parse } from "./parser/zip-parser.mjs";
+import { toPinyin } from "./pinyin.mjs";
+
+function breakJSONIntoSingleObjects(str) {
+  const objs = [];
+  let depth = 0;
+  let line = 1;
+  let start = -1;
+  let startLine = -1;
+  let inString = false;
+  let inStringEscSequence = false;
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i];
+    if (inString) {
+      if (inStringEscSequence) {
+        inStringEscSequence = false;
+      } else {
+        if (c === "\\") inStringEscSequence = true;
+        else if (c === '"') inString = false;
+      }
+    } else {
+      if (c === "{") {
+        if (depth === 0) {
+          start = i;
+          startLine = line;
+        }
+        depth++;
+      } else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          objs.push({
+            obj: JSON.parse(str.slice(start, i + 1)),
+            start: startLine,
+            end: line,
+          });
+        }
+      } else if (c === '"') {
+        inString = true;
+      } else if (c === "\n") {
+        line++;
+      }
+    }
+  }
+  return objs;
+}
+
+// copied from gettext.js/bin/po2json
+function postprocessPoJson(jsonData) {
+  const json = {};
+  for (const key in jsonData) {
+    // Special headers handling, we do not need everything
+    if ("" === key) {
+      json[""] = {
+        language: jsonData[""]["language"],
+        "plural-forms": jsonData[""]["plural-forms"],
+      };
+
+      continue;
+    }
+
+    // Do not dump untranslated keys, they already are in the templates!
+    if ("" !== jsonData[key][1])
+      json[key] =
+        2 === jsonData[key].length ? jsonData[key][1] : jsonData[key].slice(1);
+  }
+  return json;
+}
 
 const forbiddenTags = [
   "cdda-experimental-2021-07-09-1837", // this release had broken json
   "cdda-experimental-2021-07-09-1719",
 ];
+
+/** @param {string | Buffer} zip */
+function glob(zip) {
+  const z = new AdmZip(zip)
+  /** @param {string} pattern */
+  function* glob(pattern) {
+      for (const f of z.getEntries()) {
+          if (f.isDirectory) continue
+          if (minimatch(f.entryName, `*/${pattern}`)) {
+              yield {
+                  name: f.entryName.split("/").slice(1).join("/"),
+                  data: () => f.getData().toString("utf8"),
+              }
+          }
+      }
+  }
+  return glob
+}
 
 /** @param {import('github-script').AsyncFunctionArguments & {dryRun?: boolean}} AsyncFunctionArguments */
 export default async function run({ github, context, dryRun = false }) {
@@ -130,17 +217,57 @@ export default async function run({ github, context, dryRun = false }) {
 
     // @ts-ignore
     const zBuf = Buffer.from(zip)
+    const globFn = glob(zBuf);
   
-    const { data, dataMods, langs } = await parse(zBuf);
+
+    console.group("Collating base JSON...");
+    const data = [];
+    for (const f of globFn("data/json/**/*.json")) {
+        const filename = f.name.replaceAll("\\", "/");
+        const objs = breakJSONIntoSingleObjects(f.data())
+        for (const { obj, start, end } of objs) {
+            obj.__filename = filename + `#L${start}-L${end}`;
+            data.push(obj);
+        }
+    }
+    console.log(`Found ${data.length} objects.`);
+    console.groupEnd();
+
+
+    console.group("Collating mods JSON...");
+    /** @type {Record<string, { info: any, data: any[] }>} */
+    const dataMods = {};
+    for (const i of globFn("data/mods/*/modinfo.json")) {
+      const modname = i.name.replaceAll("\\", "/").split("/")[2];
+      if (modname === "dda") continue;
+      const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
+      if (!modInfo || modInfo.obsolete) {
+        continue;
+      }
+      const modId = modInfo.id;
+      dataMods[modId] = { info: modInfo, data: [] };
+      for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
+        const filename = f.name.replaceAll("\\", "/");
+        const objs = breakJSONIntoSingleObjects(f.data());
+        for (const { obj, start, end } of objs) {
+          if (obj.type === "MOD_INFO") continue;
+          obj.__filename = filename + `#L${start}-L${end}`;
+          dataMods[modId].data.push(obj);
+        }
+      }
+    }
+    console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
+    console.groupEnd();
+
 
     const allJson = JSON.stringify({
       build_number: tag_name,
       release,
       data,
       modlist: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
-    })
+    });
 
-    const allModsJson = JSON.stringify(dataMods)
+    const allModsJson = JSON.stringify(dataMods);
 
     await createBlob(`${pathBase}/all.json`, allJson);
     await createBlob(`${pathBase}/all_mods.json`, allModsJson);
@@ -152,24 +279,54 @@ export default async function run({ github, context, dryRun = false }) {
       await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
     }
 
-    await Promise.all(Object.entries(langs).map(async ([lang, { jsonStr, pinyinStr }]) => {
-      await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
-      if (tag_name === latestRelease) {
-        await createBlob(`data/latest.gz/lang/${lang}.json`,zlib.gzipSync(jsonStr));
-      }
-      if (pinyinStr) {
-        await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
-        if (tag_name === latestRelease) {
-          await createBlob(`data/latest.gz/lang/${lang}_pinyin.json`, zlib.gzipSync(pinyinStr));
+
+    console.group("Compiling lang JSON...");
+
+    // Measure both CPU time and wall time
+    console.time("lang JSON");
+    const cpuUsage = process.cpuUsage();
+    const langs = await Promise.all(
+      [...globFn("lang/po/*.po")].map(async (f) => {
+        const lang = path.basename(f.name, ".po");
+        const json = postprocessPoJson(
+          po2json.parse(f.data()),
+        );
+        const jsonStr = JSON.stringify(json);
+        await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
+        if (tag_name === latestRelease)
+          await createBlob(
+            `data/latest.gz/lang/${lang}.json`,
+            zlib.gzipSync(jsonStr),
+          );
+
+        // To support searching Chinese translations by pinyin
+        if (lang.startsWith("zh_")) {
+          const pinyin = toPinyin(data, json);
+          const pinyinStr = JSON.stringify(pinyin);
+          await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
+          if (tag_name === latestRelease)
+            await createBlob(
+              `data/latest.gz/lang/${lang}_pinyin.json`,
+              zlib.gzipSync(pinyinStr),
+            );
         }
-      }
-    }));
+        return lang;
+      }),
+    );
+    console.timeEnd("lang JSON");
+    const newUsage = process.cpuUsage(cpuUsage);
+    console.log(
+      `CPU time: ${newUsage.user / 1e6}s user, ${newUsage.system / 1e6}s system`,
+    );
+    console.log(`Found ${Object.keys(langs).length} languages.`);
+    console.groupEnd();
+
 
     newBuilds.push({
       build_number: tag_name,
       prerelease: release.prerelease,
       created_at: release.created_at,
-      langs: Object.keys(langs),
+      langs,
     });
     console.groupEnd();
   }
