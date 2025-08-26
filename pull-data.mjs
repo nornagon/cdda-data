@@ -86,7 +86,7 @@ function glob(zip) {
           if (f.isDirectory) continue
           if (minimatch(f.entryName, `*/${pattern}`)) {
               yield {
-                  name: f.entryName.split("/").slice(1).join("/"),
+                  name: f.entryName.replaceAll("\\", "/").split("/").slice(1).join("/"),
                   data: () => f.getData().toString("utf8"),
               }
           }
@@ -223,7 +223,7 @@ export default async function run({ github, context, dryRun = false }) {
     console.group("Collating base JSON...");
     const data = [];
     for (const f of globFn("data/json/**/*.json")) {
-        const filename = f.name.replaceAll("\\", "/");
+        const filename = f.name;
         const objs = breakJSONIntoSingleObjects(f.data())
         for (const { obj, start, end } of objs) {
             obj.__filename = filename + `#L${start}-L${end}`;
@@ -238,8 +238,7 @@ export default async function run({ github, context, dryRun = false }) {
     /** @type {Record<string, { info: any, data: any[] }>} */
     const dataMods = {};
     for (const i of globFn("data/mods/*/modinfo.json")) {
-      const modname = i.name.replaceAll("\\", "/").split("/")[2];
-      if (modname === "dda") continue;
+      const modname = i.name.split("/")[2];
       const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
       if (!modInfo || modInfo.obsolete) {
         continue;
@@ -247,7 +246,7 @@ export default async function run({ github, context, dryRun = false }) {
       const modId = modInfo.id;
       dataMods[modId] = { info: modInfo, data: [] };
       for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
-        const filename = f.name.replaceAll("\\", "/");
+        const filename = f.name;
         const objs = breakJSONIntoSingleObjects(f.data());
         for (const { obj, start, end } of objs) {
           if (obj.type === "MOD_INFO") continue;
@@ -264,7 +263,7 @@ export default async function run({ github, context, dryRun = false }) {
       build_number: tag_name,
       release,
       data,
-      modlist: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
+      mods: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
     });
 
     const allModsJson = JSON.stringify(dataMods);
