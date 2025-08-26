@@ -77,17 +77,22 @@ const forbiddenTags = [
   "cdda-experimental-2021-07-09-1719",
 ];
 
-/**
- * @param {AdmZip} zip
- * @param {string} pattern
- */
-function* globZip(zip, pattern) {
-  for (const f of zip.getEntries()) {
-    if (f.isDirectory) continue;
-    if (minimatch(f.entryName, pattern)) {
-      yield f;
-    }
+/** @param {string | Buffer} zip */
+function glob(zip) {
+  const z = new AdmZip(zip)
+  /** @param {string} pattern */
+  function* glob(pattern) {
+      for (const f of z.getEntries()) {
+          if (f.isDirectory) continue
+          if (minimatch(f.entryName, `*/${pattern}`)) {
+              yield {
+                  name: f.entryName.replaceAll("\\", "/").split("/").slice(1).join("/"),
+                  data: () => f.getData().toString("utf8"),
+              }
+          }
+      }
   }
+  return glob
 }
 
 /** @param {import('github-script').AsyncFunctionArguments & {dryRun?: boolean}} AsyncFunctionArguments */
@@ -210,38 +215,69 @@ export default async function run({ github, context, dryRun = false }) {
       ref: tag_name,
     });
 
-    console.log("Collating JSON...");
-
     // @ts-ignore
-    const z = new AdmZip(Buffer.from(zip));
+    const zBuf = Buffer.from(zip)
+    const globFn = glob(zBuf);
+  
 
+    console.group("Collating base JSON...");
     const data = [];
-    for (const f of globZip(z, "*/data/json/**/*.json")) {
-      // The zipball has a top-level directory that we want to ignore
-      const filename = f.entryName.split("/").slice(1).join("/");
+    for (const f of globFn("data/json/**/*.json")) {
+        const filename = f.name;
+        const objs = breakJSONIntoSingleObjects(f.data())
+        for (const { obj, start, end } of objs) {
+            obj.__filename = filename + `#L${start}-L${end}`;
+            data.push(obj);
+        }
+    }
+    console.log(`Found ${data.length} objects.`);
+    console.groupEnd();
 
-      // Break up the JSON into individual objects so we can inject line numbers
-      const objs = breakJSONIntoSingleObjects(f.getData().toString("utf8"));
-      for (const { obj, start, end } of objs) {
-        obj.__filename = filename + `#L${start}-L${end}`;
-        data.push(obj);
+
+    console.group("Collating mods JSON...");
+    /** @type {Record<string, { info: any, data: any[] }>} */
+    const dataMods = {};
+    for (const i of globFn("data/mods/*/modinfo.json")) {
+      const modname = i.name.split("/")[2];
+      const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
+      if (!modInfo || modInfo.obsolete) {
+        continue;
+      }
+      const modId = modInfo.id;
+      dataMods[modId] = { info: modInfo, data: [] };
+      for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
+        const filename = f.name;
+        const objs = breakJSONIntoSingleObjects(f.data());
+        for (const { obj, start, end } of objs) {
+          if (obj.type === "MOD_INFO") continue;
+          obj.__filename = filename + `#L${start}-L${end}`;
+          dataMods[modId].data.push(obj);
+        }
       }
     }
+    console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
+    console.groupEnd();
 
-    console.log(`Found ${data.length} objects.`);
 
-    const all = {
+    const allJson = JSON.stringify({
       build_number: tag_name,
       release,
       data,
-    };
-    const allJson = JSON.stringify(all);
+      mods: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
+    });
+
+    const allModsJson = JSON.stringify(dataMods);
+
     await createBlob(`${pathBase}/all.json`, allJson);
+    await createBlob(`${pathBase}/all_mods.json`, allModsJson);
 
     // We upload a gzipped version of latest for boring GoogleBot reasons
     // TODO: these should go in a separate branch to reduce the total size of the main branch
-    if (tag_name === latestRelease)
+    if (tag_name === latestRelease) {
       await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
+      await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
+    }
+
 
     console.group("Compiling lang JSON...");
 
@@ -249,10 +285,10 @@ export default async function run({ github, context, dryRun = false }) {
     console.time("lang JSON");
     const cpuUsage = process.cpuUsage();
     const langs = await Promise.all(
-      [...globZip(z, "*/lang/po/*.po")].map(async (f) => {
-        const lang = path.basename(f.entryName, ".po");
+      [...globFn("lang/po/*.po")].map(async (f) => {
+        const lang = path.basename(f.name, ".po");
         const json = postprocessPoJson(
-          po2json.parse(f.getData().toString("utf8")),
+          po2json.parse(f.data()),
         );
         const jsonStr = JSON.stringify(json);
         await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
@@ -281,13 +317,16 @@ export default async function run({ github, context, dryRun = false }) {
     console.log(
       `CPU time: ${newUsage.user / 1e6}s user, ${newUsage.system / 1e6}s system`,
     );
+    console.log(`Found ${Object.keys(langs).length} languages.`);
+    console.groupEnd();
+
+
     newBuilds.push({
       build_number: tag_name,
       prerelease: release.prerelease,
       created_at: release.created_at,
       langs,
     });
-    console.groupEnd();
     console.groupEnd();
   }
 
@@ -310,11 +349,22 @@ export default async function run({ github, context, dryRun = false }) {
       `data/${latestBuild.build_number}/all.json`,
       "data/latest/all.json",
     );
-    for (const lang of latestBuild.langs)
+    copyBlob(
+      `data/${latestBuild.build_number}/all_mods.json`,
+      "data/latest/all_mods.json",
+    );
+    for (const lang of latestBuild.langs) {
       copyBlob(
         `data/${latestBuild.build_number}/lang/${lang}.json`,
         `data/latest/lang/${lang}.json`,
       );
+      if (lang.startsWith("zh_")) {
+        copyBlob(
+          `data/${latestBuild.build_number}/lang/${lang}_pinyin.json`,
+          `data/latest/lang/${lang}_pinyin.json`,
+        );
+      }
+    }
   } else {
     console.log(
       `Latest release (${latestRelease}) not in updated builds, skipping copy to latest.`,
