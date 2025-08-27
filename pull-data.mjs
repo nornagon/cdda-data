@@ -229,10 +229,10 @@ export default async function run({ github, context, dryRun = false }) {
 
   const releasesToProcess = [...newReleases, ...backfillReleases];
 
-  for (const release of releasesToProcess) {
+  for (const [releaseIndex, release] of releasesToProcess.entries()) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
-    console.group(`Processing ${tag_name}...`);
+    console.group(`(${releaseIndex+1}/${releasesToProcess.length}) Processing ${tag_name}...`);
     if (forbiddenTags.includes(tag_name)) {
       console.log(`Skipping ${tag_name} because it's on the forbidden list.`);
       continue;
