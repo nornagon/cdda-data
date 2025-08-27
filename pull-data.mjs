@@ -200,6 +200,7 @@ export default async function run({ github, context, dryRun = false }) {
    *  build_number: string,
    *  prerelease: boolean,
    *  created_at: string,
+   *  updated_at?: string,
    *  langs: string[],
    *  version?: number
    * }[]}
@@ -352,6 +353,7 @@ export default async function run({ github, context, dryRun = false }) {
       build_number: tag_name,
       prerelease: release.prerelease,
       created_at: release.created_at,
+      updated_at: release.created_at,
       langs,
       version: buildVersion,
     });
@@ -363,10 +365,16 @@ export default async function run({ github, context, dryRun = false }) {
     return;
   }
 
-  const builds = existingBuilds
-    .filter((b1) => !newBuilds.some((b2) => b2.build_number === b1.build_number))
-    .concat(newBuilds);
-
+  const builds = [...existingBuilds]
+  for (const b of newBuilds) {
+    const index = builds.findIndex((b2) => b2.build_number === b.build_number);
+    if (index !== -1) {
+      b.created_at = builds[index].created_at;
+      builds[index] = b;
+    } else {
+      builds.push(b);
+    }
+  }
   builds.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   console.log(`Writing ${builds.length} builds to builds.json...`);
