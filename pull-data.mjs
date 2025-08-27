@@ -106,7 +106,7 @@ export default async function run({ github, context, dryRun = false }) {
   }
   const dataBranch = "main";
 
-  const generatedVersion = 1;
+  const buildVersion = 1;
 
   console.log("Fetching release list...");
 
@@ -216,7 +216,7 @@ export default async function run({ github, context, dryRun = false }) {
 
   const backfillReleases = (await Promise.all(
     existingBuilds
-      .filter((b) => (b.version ?? 0) < generatedVersion)
+      .filter((b) => (b.version ?? 0) < buildVersion)
       .slice(0, parseInt(process.env.BACKFILL_LIMIT ?? "30"))
       .map((b) => github.rest.repos.getReleaseByTag({
         ...dataRepo,
@@ -353,7 +353,7 @@ export default async function run({ github, context, dryRun = false }) {
       prerelease: release.prerelease,
       created_at: release.created_at,
       langs,
-      version: generatedVersion,
+      version: buildVersion,
     });
     console.groupEnd();
   }
