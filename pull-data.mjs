@@ -214,6 +214,7 @@ export default async function run({ github, context, dryRun = false }) {
   const newReleases = releases.filter(
     (r) => !existingBuilds.some((b) => b.build_number === r.tag_name),
   );
+  console.log(`Found ${newReleases.length} new releases.`);
 
   const backfillReleases = (await Promise.all(
     existingBuilds
@@ -224,6 +225,7 @@ export default async function run({ github, context, dryRun = false }) {
         tag: b.build_number,
       }))
   )).filter(r => r.status === 200).map(r => r.data);
+  console.log(`Found ${backfillReleases.length} releases to backfill.`);
 
   const releasesToProcess = [...newReleases, ...backfillReleases];
 
