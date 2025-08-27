@@ -363,7 +363,9 @@ export default async function run({ github, context, dryRun = false }) {
     return;
   }
 
-  const builds = existingBuilds.concat(newBuilds);
+  const builds = existingBuilds
+    .filter((b1) => !newBuilds.some((b2) => b2.build_number === b1.build_number))
+    .concat(newBuilds);
 
   builds.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
