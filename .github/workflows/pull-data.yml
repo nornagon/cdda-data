@@ -18,6 +18,8 @@ jobs:
           node-version: '20.x'
       - run: yarn
       - uses: actions/github-script@v7
+        env:
+          BACKFILL_LIMIT: ${{ vars.BACKFILL_LIMIT }}
         with:
           script: |
             const { default: run } = await import('${{ github.workspace }}/pull-data.mjs')
