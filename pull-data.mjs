@@ -100,13 +100,18 @@ export default async function run({ github, context, dryRun = false }) {
   if (dryRun) {
     console.log("(DRY RUN) No changes will be made to the repository.");
   }
+  const dataRepo = {
+    owner: "CleverRaven",
+    repo: "Cataclysm-DDA",
+  }
   const dataBranch = "main";
+
+  const generatedVersion = 1;
 
   console.log("Fetching release list...");
 
   const { data: releases } = await github.rest.repos.listReleases({
-    owner: "CleverRaven",
-    repo: "Cataclysm-DDA",
+    ...dataRepo,
   });
 
   const latestRelease = releases.find((r) =>
@@ -190,15 +195,38 @@ export default async function run({ github, context, dryRun = false }) {
   });
   if (!("type" in buildsJson) || buildsJson.type !== "file")
     throw new Error("builds.json is not a file");
+  /**
+   * @type {{
+   *  build_number: string,
+   *  prerelease: boolean,
+   *  created_at: string,
+   *  langs: string[],
+   *  version?: number
+   * }[]}
+   */
   const existingBuilds = JSON.parse(
     Buffer.from(buildsJson.content, "base64").toString("utf8"),
   );
 
   const newBuilds = [];
 
-  for (const release of releases.filter(
+  const newReleases = releases.filter(
     (r) => !existingBuilds.some((b) => b.build_number === r.tag_name),
-  )) {
+  );
+
+  const backfillReleases = (await Promise.all(
+    existingBuilds
+      .filter((b) => (b.version ?? 0) < generatedVersion)
+      .slice(0, parseInt(process.env.BACKFILL_LIMIT ?? "30"))
+      .map((b) => github.rest.repos.getReleaseByTag({
+        ...dataRepo,
+        tag: b.build_number,
+      }))
+  )).filter(r => r.status === 200).map(r => r.data);
+
+  const releasesToProcess = [...newReleases, ...backfillReleases];
+
+  for (const release of releasesToProcess) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
     console.group(`Processing ${tag_name}...`);
@@ -210,8 +238,7 @@ export default async function run({ github, context, dryRun = false }) {
     console.log(`Fetching source...`);
 
     const { data: zip } = await github.rest.repos.downloadZipballArchive({
-      owner: "CleverRaven",
-      repo: "Cataclysm-DDA",
+      ...dataRepo,
       ref: tag_name,
     });
 
@@ -326,6 +353,7 @@ export default async function run({ github, context, dryRun = false }) {
       prerelease: release.prerelease,
       created_at: release.created_at,
       langs,
+      version: generatedVersion,
     });
     console.groupEnd();
   }
