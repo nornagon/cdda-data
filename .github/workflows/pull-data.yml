@@ -22,4 +22,4 @@ jobs:
           script: |
             const { default: run } = await import('${{ github.workspace }}/pull-data.mjs')
 
-            await run({ github, context })
+            await run({ github, context, dryRun: true })
