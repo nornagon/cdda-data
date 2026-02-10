@@ -183,16 +183,19 @@ export default async function run({ github, context, dryRun = false }) {
     ref: dataBranch,
   });
 
-  const { data: buildsJson } = await github.rest.repos.getContent({
-    ...context.repo,
-    path: "builds.json",
-    ref: baseCommit.sha,
-  });
-  if (!("type" in buildsJson) || buildsJson.type !== "file")
-    throw new Error("builds.json is not a file");
-  const existingBuilds = JSON.parse(
-    Buffer.from(buildsJson.content, "base64").toString("utf8"),
+  const { data: buildsJson } = await github.request(
+    "GET /repos/{owner}/{repo}/contents/{path}",
+    {
+      ...context.repo,
+      path: "builds.json",
+      ref: baseCommit.sha,
+      headers: {
+        accept: "application/vnd.github.raw",
+      },
+    }
   );
+
+  const existingBuilds = JSON.parse(buildsJson);
 
   const newBuilds = [];
 
