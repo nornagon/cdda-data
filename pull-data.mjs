@@ -199,9 +199,12 @@ export default async function run({ github, context, dryRun = false }) {
 
   const newBuilds = [];
 
-  for (const release of releases.filter(
+  const missingReleases = releases.filter(
     (r) => !existingBuilds.some((b) => b.build_number === r.tag_name),
-  )) {
+  );
+
+  // Process at most 4 missing releases per run.
+  for (const release of missingReleases.slice(0, 4)) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
     console.group(`Processing ${tag_name}...`);
