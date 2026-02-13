@@ -232,29 +232,9 @@ export default async function run({ github, context, dryRun = false }) {
     ref: dataBranch,
   });
 
-  /** @type {string} */
-  let existingAllBuildsPath;
-  /** @type {string} */
-  let existingAllBuildsJson;
-  try {
-    existingAllBuildsPath = "all-builds.json";
-    existingAllBuildsJson = await fetchRawFile(existingAllBuildsPath);
-  } catch (e) {
-    if (e.status !== 404) throw e;
-    existingAllBuildsPath = "builds.json";
-    existingAllBuildsJson = await fetchRawFile(existingAllBuildsPath);
-  }
+  const existingAllBuildsJson = await fetchRawFile("all-builds.json");
   const existingAllBuilds = JSON.parse(existingAllBuildsJson);
-
-  let existingImportantBuildsJson = existingAllBuildsJson;
-  if (existingAllBuildsPath === "all-builds.json") {
-    try {
-      existingImportantBuildsJson = await fetchRawFile("builds.json");
-    } catch (e) {
-      if (e.status !== 404) throw e;
-      existingImportantBuildsJson = "[]";
-    }
-  }
+  const existingImportantBuildsJson = await fetchRawFile("builds.json");
 
   const newBuilds = [];
 
