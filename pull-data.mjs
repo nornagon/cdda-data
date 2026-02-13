@@ -95,7 +95,22 @@ function glob(zip) {
   return glob
 }
 
-/** @param {import('github-script').AsyncFunctionArguments & {dryRun?: boolean}} AsyncFunctionArguments */
+/**
+ * @typedef {{
+ *   rest: import("octokit").Octokit["rest"],
+ *   request: import("octokit").Octokit["request"]
+ * }} GithubClient
+ */
+
+/**
+ * @typedef {{
+ *   github: GithubClient,
+ *   context: { repo: { owner: string, repo: string } },
+ *   dryRun?: boolean
+ * }} RunArguments
+ */
+
+/** @param {RunArguments} RunArguments */
 export default async function run({ github, context, dryRun = false }) {
   if (dryRun) {
     console.log("(DRY RUN) No changes will be made to the repository.");
