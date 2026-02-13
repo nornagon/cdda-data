@@ -160,6 +160,40 @@ export default async function run({ github, context, dryRun = false }) {
     return blob;
   }
   /**
+   * @param {string} path
+   */
+  async function fetchRawFile(path) {
+    const { data } = await github.request(
+      "GET /repos/{owner}/{repo}/contents/{path}",
+      {
+        ...context.repo,
+        path,
+        ref: baseCommit.sha,
+        headers: {
+          accept: "application/vnd.github.raw",
+        },
+      }
+    );
+    return data;
+  }
+
+  /**
+   * Keep stable releases, plus only recent experimental/prerelease builds.
+   * @param {{ build_number: string, prerelease: boolean, created_at: string, langs: string[] }[]} builds
+   */
+  function filterImportantBuilds(builds) {
+    const cutoff = new Date();
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - 3);
+    return builds.filter((build) => {
+      const isExperimental = build.build_number.startsWith("cdda-experimental-");
+      const isStableRelease = !isExperimental && !build.prerelease;
+      if (isStableRelease) return true;
+      const createdAt = new Date(build.created_at);
+      if (Number.isNaN(createdAt.valueOf())) return false;
+      return createdAt >= cutoff;
+    });
+  }
+  /**
    * Copy an already-created blob to a new path.
    * @param {string} fromPath
    * @param {string} toPath
@@ -183,24 +217,34 @@ export default async function run({ github, context, dryRun = false }) {
     ref: dataBranch,
   });
 
-  const { data: buildsJson } = await github.request(
-    "GET /repos/{owner}/{repo}/contents/{path}",
-    {
-      ...context.repo,
-      path: "builds.json",
-      ref: baseCommit.sha,
-      headers: {
-        accept: "application/vnd.github.raw",
-      },
-    }
-  );
+  /** @type {string} */
+  let existingAllBuildsPath;
+  /** @type {string} */
+  let existingAllBuildsJson;
+  try {
+    existingAllBuildsPath = "all-builds.json";
+    existingAllBuildsJson = await fetchRawFile(existingAllBuildsPath);
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    existingAllBuildsPath = "builds.json";
+    existingAllBuildsJson = await fetchRawFile(existingAllBuildsPath);
+  }
+  const existingAllBuilds = JSON.parse(existingAllBuildsJson);
 
-  const existingBuilds = JSON.parse(buildsJson);
+  let existingImportantBuildsJson = existingAllBuildsJson;
+  if (existingAllBuildsPath === "all-builds.json") {
+    try {
+      existingImportantBuildsJson = await fetchRawFile("builds.json");
+    } catch (e) {
+      if (e.status !== 404) throw e;
+      existingImportantBuildsJson = "[]";
+    }
+  }
 
   const newBuilds = [];
 
   const missingReleases = releases.filter(
-    (r) => !existingBuilds.some((b) => b.build_number === r.tag_name),
+    (r) => !existingAllBuilds.some((b) => b.build_number === r.tag_name),
   );
 
   // Process at most 4 missing releases per run.
@@ -351,17 +395,25 @@ export default async function run({ github, context, dryRun = false }) {
     console.groupEnd();
   }
 
-  if (newBuilds.length === 0) {
-    console.log("No new builds to process. We're done here.");
+  const allBuilds = existingAllBuilds.concat(newBuilds);
+  allBuilds.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const importantBuilds = filterImportantBuilds(allBuilds);
+
+  const allBuildsJson = JSON.stringify(allBuilds);
+  const importantBuildsJson = JSON.stringify(importantBuilds);
+  if (
+    newBuilds.length === 0 &&
+    allBuildsJson === existingAllBuildsJson &&
+    importantBuildsJson === existingImportantBuildsJson
+  ) {
+    console.log("No new builds and build indexes are unchanged. We're done here.");
     return;
   }
 
-  const builds = existingBuilds.concat(newBuilds);
-
-  builds.sort((a, b) => b.created_at.localeCompare(a.created_at));
-
-  console.log(`Writing ${builds.length} builds to builds.json...`);
-  await createBlob("builds.json", JSON.stringify(builds));
+  console.log(`Writing ${allBuilds.length} builds to all-builds.json...`);
+  await createBlob("all-builds.json", allBuildsJson);
+  console.log(`Writing ${importantBuilds.length} important builds to builds.json...`);
+  await createBlob("builds.json", importantBuildsJson);
 
   const latestBuild = newBuilds.find((b) => b.build_number === latestRelease);
   if (latestBuild) {
@@ -410,9 +462,13 @@ export default async function run({ github, context, dryRun = false }) {
   });
 
   console.log("Creating commit...");
+  const commitMessage =
+    newBuilds.length > 0
+      ? `Update data for ${allBuilds[0].build_number}`
+      : "Refresh build indexes";
   const { data: commit } = await github.rest.git.createCommit({
     ...context.repo,
-    message: `Update data for ${builds[0].build_number}`,
+    message: commitMessage,
     tree: tree.sha,
     author: {
       name: "HHG2C Update Bot",
