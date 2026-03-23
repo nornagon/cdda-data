@@ -115,13 +115,18 @@ export default async function run({ github, context, dryRun = false }) {
   if (dryRun) {
     console.log("(DRY RUN) No changes will be made to the repository.");
   }
+  const dataRepo = {
+    owner: "CleverRaven",
+    repo: "Cataclysm-DDA",
+  }
   const dataBranch = "main";
+
+  const buildVersion = 1;
 
   console.log("Fetching release list...");
 
   const { data: releases } = await github.rest.repos.listReleases({
-    owner: "CleverRaven",
-    repo: "Cataclysm-DDA",
+    ...dataRepo,
   });
 
   const latestRelease = releases.find((r) =>
@@ -233,20 +238,44 @@ export default async function run({ github, context, dryRun = false }) {
   });
 
   const existingAllBuildsJson = await fetchRawFile("all-builds.json");
+  /**
+   * @type {{
+   *  build_number: string,
+   *  prerelease: boolean,
+   *  created_at: string,
+   *  updated_at?: string,
+   *  langs: string[],
+   *  version?: number
+   * }[]}
+   */
   const existingAllBuilds = JSON.parse(existingAllBuildsJson);
   const existingImportantBuildsJson = await fetchRawFile("builds.json");
 
   const newBuilds = [];
 
   const missingReleases = releases.filter(
-    (r) => !existingAllBuilds.some((b) => b.build_number === r.tag_name),
-  );
+      (r) => !existingAllBuilds.some((b) => b.build_number === r.tag_name),
+    );
+  console.log(`Found ${missingReleases.length} missing releases.`);
+
+  const backfillReleases = (await Promise.all(
+    existingAllBuilds
+      .filter((b) => (b.version ?? 0) < buildVersion)
+      .slice(0, parseInt(process.env.BACKFILL_LIMIT ?? "30"))
+      .map((b) => github.rest.repos.getReleaseByTag({
+        ...dataRepo,
+        tag: b.build_number,
+      }))
+  )).filter(r => r.status === 200).map(r => r.data);
+  console.log(`Found ${backfillReleases.length} releases to backfill.`);
 
   // Process at most 4 missing releases per run.
-  for (const release of missingReleases.slice(0, 4)) {
+  const releasesToProcess = [...missingReleases, ...backfillReleases].slice(0, 4);
+
+  for (const [releaseIndex, release] of releasesToProcess.entries()) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
-    console.group(`Processing ${tag_name}...`);
+    console.group(`(${releaseIndex+1}/${releasesToProcess.length}) Processing ${tag_name}...`);
     if (forbiddenTags.includes(tag_name)) {
       console.log(`Skipping ${tag_name} because it's on the forbidden list.`);
       continue;
@@ -255,8 +284,7 @@ export default async function run({ github, context, dryRun = false }) {
     console.log(`Fetching source...`);
 
     const { data: zip } = await github.rest.repos.downloadZipballArchive({
-      owner: "CleverRaven",
-      repo: "Cataclysm-DDA",
+      ...dataRepo,
       ref: tag_name,
     });
 
@@ -385,12 +413,23 @@ export default async function run({ github, context, dryRun = false }) {
       build_number: tag_name,
       prerelease: release.prerelease,
       created_at: release.created_at,
+      updated_at: release.created_at,
       langs,
+      version: buildVersion,
     });
     console.groupEnd();
   }
 
-  const allBuilds = existingAllBuilds.concat(newBuilds);
+  const allBuilds = [...existingAllBuilds]
+  for (const b of newBuilds) {
+    const index = allBuilds.findIndex((b2) => b2.build_number === b.build_number);
+    if (index !== -1) {
+      b.created_at = allBuilds[index].created_at;
+      allBuilds[index] = b;
+    } else {
+      allBuilds.push(b);
+    }
+  }
   allBuilds.sort((a, b) => b.created_at.localeCompare(a.created_at));
   const importantBuilds = filterImportantBuilds(allBuilds);
 
