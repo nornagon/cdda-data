@@ -269,10 +269,10 @@ export default async function run({ github, context, dryRun = false }) {
   )).filter(r => r.status === 200).map(r => r.data);
   console.log(`Found ${backfillReleases.length} releases to backfill.`);
 
-  const releasesToProcess = [...missingReleases, ...backfillReleases];
-
   // Process at most 4 missing releases per run.
-  for (const [releaseIndex, release] of releasesToProcess.slice(0, 4).entries()) {
+  const releasesToProcess = [...missingReleases, ...backfillReleases].slice(0, 4);
+
+  for (const [releaseIndex, release] of releasesToProcess.entries()) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
     console.group(`(${releaseIndex+1}/${releasesToProcess.length}) Processing ${tag_name}...`);
