@@ -84,7 +84,7 @@ function glob(zip) {
   function* glob(pattern) {
       for (const f of z.getEntries()) {
           if (f.isDirectory) continue
-          if (minimatch(f.entryName, `*/${pattern}`)) {
+          if (minimatch(f.entryName, pattern)) {
               yield {
                   name: f.entryName.replaceAll("\\", "/").split("/").slice(1).join("/"),
                   data: () => f.getData().toString("utf8"),
@@ -95,7 +95,22 @@ function glob(zip) {
   return glob
 }
 
-/** @param {import('github-script').AsyncFunctionArguments & {dryRun?: boolean}} AsyncFunctionArguments */
+/**
+ * @typedef {{
+ *   rest: import("octokit").Octokit["rest"],
+ *   request: import("octokit").Octokit["request"]
+ * }} GithubClient
+ */
+
+/**
+ * @typedef {{
+ *   github: GithubClient,
+ *   context: { repo: { owner: string, repo: string } },
+ *   dryRun?: boolean
+ * }} RunArguments
+ */
+
+/** @param {RunArguments} RunArguments */
 export default async function run({ github, context, dryRun = false }) {
   if (dryRun) {
     console.log("(DRY RUN) No changes will be made to the repository.");
@@ -165,6 +180,40 @@ export default async function run({ github, context, dryRun = false }) {
     return blob;
   }
   /**
+   * @param {string} path
+   */
+  async function fetchRawFile(path) {
+    const { data } = await github.request(
+      "GET /repos/{owner}/{repo}/contents/{path}",
+      {
+        ...context.repo,
+        path,
+        ref: baseCommit.sha,
+        headers: {
+          accept: "application/vnd.github.raw",
+        },
+      }
+    );
+    return data;
+  }
+
+  /**
+   * Keep stable releases, plus only recent experimental/prerelease builds.
+   * @param {{ build_number: string, prerelease: boolean, created_at: string, langs: string[] }[]} builds
+   */
+  function filterImportantBuilds(builds) {
+    const cutoff = new Date();
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - 3);
+    return builds.filter((build) => {
+      const isExperimental = build.build_number.startsWith("cdda-experimental-");
+      const isStableRelease = !isExperimental && !build.prerelease;
+      if (isStableRelease) return true;
+      const createdAt = new Date(build.created_at);
+      if (Number.isNaN(createdAt.valueOf())) return false;
+      return createdAt >= cutoff;
+    });
+  }
+  /**
    * Copy an already-created blob to a new path.
    * @param {string} fromPath
    * @param {string} toPath
@@ -188,13 +237,7 @@ export default async function run({ github, context, dryRun = false }) {
     ref: dataBranch,
   });
 
-  const { data: buildsJson } = await github.rest.repos.getContent({
-    ...context.repo,
-    path: "builds.json",
-    ref: baseCommit.sha,
-  });
-  if (!("type" in buildsJson) || buildsJson.type !== "file")
-    throw new Error("builds.json is not a file");
+  const existingAllBuildsJson = await fetchRawFile("all-builds.json");
   /**
    * @type {{
    *  build_number: string,
@@ -205,19 +248,18 @@ export default async function run({ github, context, dryRun = false }) {
    *  version?: number
    * }[]}
    */
-  const existingBuilds = JSON.parse(
-    Buffer.from(buildsJson.content, "base64").toString("utf8"),
-  );
+  const existingAllBuilds = JSON.parse(existingAllBuildsJson);
+  const existingImportantBuildsJson = await fetchRawFile("builds.json");
 
   const newBuilds = [];
 
-  const newReleases = releases.filter(
-    (r) => !existingBuilds.some((b) => b.build_number === r.tag_name),
-  );
-  console.log(`Found ${newReleases.length} new releases.`);
+  const missingReleases = releases.filter(
+      (r) => !existingAllBuilds.some((b) => b.build_number === r.tag_name),
+    );
+  console.log(`Found ${missingReleases.length} missing releases.`);
 
   const backfillReleases = (await Promise.all(
-    existingBuilds
+    existingAllBuilds
       .filter((b) => (b.version ?? 0) < buildVersion)
       .slice(0, parseInt(process.env.BACKFILL_LIMIT ?? "30"))
       .map((b) => github.rest.repos.getReleaseByTag({
@@ -227,9 +269,10 @@ export default async function run({ github, context, dryRun = false }) {
   )).filter(r => r.status === 200).map(r => r.data);
   console.log(`Found ${backfillReleases.length} releases to backfill.`);
 
-  const releasesToProcess = [...newReleases, ...backfillReleases];
+  const releasesToProcess = [...missingReleases, ...backfillReleases];
 
-  for (const [releaseIndex, release] of releasesToProcess.entries()) {
+  // Process at most 4 missing releases per run.
+  for (const [releaseIndex, release] of releasesToProcess.slice(0, 4).entries()) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
     console.group(`(${releaseIndex+1}/${releasesToProcess.length}) Processing ${tag_name}...`);
@@ -248,11 +291,10 @@ export default async function run({ github, context, dryRun = false }) {
     // @ts-ignore
     const zBuf = Buffer.from(zip)
     const globFn = glob(zBuf);
-  
 
     console.group("Collating base JSON...");
     const data = [];
-    for (const f of globFn("data/json/**/*.json")) {
+    for (const f of globFn("*/data/json/**/*.json")) {
         const filename = f.name;
         const objs = breakJSONIntoSingleObjects(f.data())
         for (const { obj, start, end } of objs) {
@@ -267,7 +309,7 @@ export default async function run({ github, context, dryRun = false }) {
     console.group("Collating mods JSON...");
     /** @type {Record<string, { info: any, data: any[] }>} */
     const dataMods = {};
-    for (const i of globFn("data/mods/*/modinfo.json")) {
+    for (const i of globFn("*/data/mods/*/modinfo.json")) {
       const modname = i.name.split("/")[2];
       const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
       if (!modInfo || modInfo.obsolete) {
@@ -275,7 +317,7 @@ export default async function run({ github, context, dryRun = false }) {
       }
       const modId = modInfo.id;
       dataMods[modId] = { info: modInfo, data: [] };
-      for (const f of globFn(`data/mods/${modname}/**/*.json`)) {
+      for (const f of globFn(`*/data/mods/${modname}/**/*.json`)) {
         const filename = f.name;
         const objs = breakJSONIntoSingleObjects(f.data());
         for (const { obj, start, end } of objs) {
@@ -308,48 +350,64 @@ export default async function run({ github, context, dryRun = false }) {
       await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
     }
 
+    console.group("Downloading translations...");
 
-    console.group("Compiling lang JSON...");
+    const translationArtifacts = await github.rest.actions.listArtifactsForRepo({
+      owner: "CleverRaven",
+      repo: "Cataclysm-DDA",
+      name: "translations",
+      per_page: 100
+    });
 
-    // Measure both CPU time and wall time
-    console.time("lang JSON");
-    const cpuUsage = process.cpuUsage();
-    const langs = await Promise.all(
-      [...globFn("lang/po/*.po")].map(async (f) => {
-        const lang = path.basename(f.name, ".po");
-        const json = postprocessPoJson(
-          po2json.parse(f.data()),
-        );
-        const jsonStr = JSON.stringify(json);
-        await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
-        if (tag_name === latestRelease)
-          await createBlob(
-            `data/latest.gz/lang/${lang}.json`,
-            zlib.gzipSync(jsonStr),
+    const relevantTranslationArtifact = translationArtifacts.data.artifacts.find(a => a.workflow_run?.head_sha === release.target_commitish)
+
+    let langs = []
+    if (relevantTranslationArtifact) {
+      console.log("Found translations")
+
+      const { data: zip } = await github.rest.actions.downloadArtifact({
+        owner: "CleverRaven",
+        repo: "Cataclysm-DDA",
+        artifact_id: relevantTranslationArtifact.id,
+        archive_format: "zip"
+      });
+      // @ts-expect-error
+      const zBuf = Buffer.from(zip)
+      const globFn = glob(zBuf);
+      langs = await Promise.all(
+        [...globFn("lang/po/*.po")].map(async (f) => {
+          const lang = path.basename(f.name, ".po");
+          const json = postprocessPoJson(
+            po2json.parse(f.data()),
           );
-
-        // To support searching Chinese translations by pinyin
-        if (lang.startsWith("zh_")) {
-          const pinyin = toPinyin(data, json);
-          const pinyinStr = JSON.stringify(pinyin);
-          await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
+          const jsonStr = JSON.stringify(json);
+          await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
           if (tag_name === latestRelease)
             await createBlob(
-              `data/latest.gz/lang/${lang}_pinyin.json`,
-              zlib.gzipSync(pinyinStr),
+              `data/latest.gz/lang/${lang}.json`,
+              zlib.gzipSync(jsonStr),
             );
-        }
-        return lang;
-      }),
-    );
-    console.timeEnd("lang JSON");
-    const newUsage = process.cpuUsage(cpuUsage);
-    console.log(
-      `CPU time: ${newUsage.user / 1e6}s user, ${newUsage.system / 1e6}s system`,
-    );
-    console.log(`Found ${Object.keys(langs).length} languages.`);
-    console.groupEnd();
 
+          // To support searching Chinese translations by pinyin
+          if (lang.startsWith("zh_")) {
+            const pinyin = toPinyin(data, json);
+            const pinyinStr = JSON.stringify(pinyin);
+            await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
+            if (tag_name === latestRelease)
+              await createBlob(
+                `data/latest.gz/lang/${lang}_pinyin.json`,
+                zlib.gzipSync(pinyinStr),
+              );
+          }
+          return lang;
+        }),
+      );
+      console.log(`Found ${Object.keys(langs).length} languages.`);
+    } else {
+      console.log(`No translation artifact found for ${release.target_commitish}`)
+    }
+
+    console.groupEnd();
 
     newBuilds.push({
       build_number: tag_name,
@@ -362,25 +420,34 @@ export default async function run({ github, context, dryRun = false }) {
     console.groupEnd();
   }
 
-  if (newBuilds.length === 0) {
-    console.log("No new builds to process. We're done here.");
+  const allBuilds = [...existingAllBuilds]
+  for (const b of newBuilds) {
+    const index = allBuilds.findIndex((b2) => b2.build_number === b.build_number);
+    if (index !== -1) {
+      b.created_at = allBuilds[index].created_at;
+      allBuilds[index] = b;
+    } else {
+      allBuilds.push(b);
+    }
+  }
+  allBuilds.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const importantBuilds = filterImportantBuilds(allBuilds);
+
+  const allBuildsJson = JSON.stringify(allBuilds);
+  const importantBuildsJson = JSON.stringify(importantBuilds);
+  if (
+    newBuilds.length === 0 &&
+    allBuildsJson === existingAllBuildsJson &&
+    importantBuildsJson === existingImportantBuildsJson
+  ) {
+    console.log("No new builds and build indexes are unchanged. We're done here.");
     return;
   }
 
-  const builds = [...existingBuilds]
-  for (const b of newBuilds) {
-    const index = builds.findIndex((b2) => b2.build_number === b.build_number);
-    if (index !== -1) {
-      b.created_at = builds[index].created_at;
-      builds[index] = b;
-    } else {
-      builds.push(b);
-    }
-  }
-  builds.sort((a, b) => b.created_at.localeCompare(a.created_at));
-
-  console.log(`Writing ${builds.length} builds to builds.json...`);
-  await createBlob("builds.json", JSON.stringify(builds));
+  console.log(`Writing ${allBuilds.length} builds to all-builds.json...`);
+  await createBlob("all-builds.json", allBuildsJson);
+  console.log(`Writing ${importantBuilds.length} important builds to builds.json...`);
+  await createBlob("builds.json", importantBuildsJson);
 
   const latestBuild = newBuilds.find((b) => b.build_number === latestRelease);
   if (latestBuild) {
@@ -429,9 +496,13 @@ export default async function run({ github, context, dryRun = false }) {
   });
 
   console.log("Creating commit...");
+  const commitMessage =
+    newBuilds.length > 0
+      ? `Update data for ${allBuilds[0].build_number}`
+      : "Refresh build indexes";
   const { data: commit } = await github.rest.git.createCommit({
     ...context.repo,
-    message: `Update data for ${builds[0].build_number}`,
+    message: commitMessage,
     tree: tree.sha,
     author: {
       name: "HHG2C Update Bot",

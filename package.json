@@ -1,12 +1,9 @@
 {
   "type": "module",
   "dependencies": {
-    "gettext.js": "^1.2.0",
-    "pinyin": "^3.0.0-alpha.5"
-  },
-  "devDependencies": {
-    "@types/github-script": "github:actions/github-script",
     "adm-zip": "^0.5.12",
-    "octokit": "^4.0.2"
+    "gettext.js": "^1.2.0",
+    "octokit": "^4.0.2",
+    "pinyin": "^3.0.0-alpha.5"
   }
 }
