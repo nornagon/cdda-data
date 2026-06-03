@@ -450,11 +450,13 @@ export default async function run({ github, context, dryRun = false }) {
     tree_sha: baseCommit.commit.tree.sha,
   });
 
-  const { data: tree } = await github.rest.git.createTree({
-    ...context.repo,
-    tree: blobs,
-    base_tree: baseTree.sha,
-  });
+  const { data: tree } = await retry(() =>
+    github.rest.git.createTree({
+      ...context.repo,
+      tree: blobs,
+      base_tree: baseTree.sha,
+    }),
+  );
 
   console.log("Creating commit...");
   const commitMessage =
@@ -485,10 +487,11 @@ async function retry(fn, retries = 10) {
     try {
       return await fn();
     } catch (e) {
-      console.error("Error", e.message, "- retrying...");
+      if (i === retries - 1) throw e;
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("Error", message, "- retrying...");
       // Wait an increasing amount of time between retries
-      await new Promise((r) => setTimeout(r, 1000 * i));
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
     }
   }
-  throw new Error("Max retries reached");
 }
