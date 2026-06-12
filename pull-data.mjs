@@ -7,6 +7,8 @@ import path from "path";
 
 import { toPinyin } from "./pinyin.mjs";
 
+const maxReleasesPerRun = 4;
+
 function breakJSONIntoSingleObjects(str) {
   const objs = [];
   let depth = 0;
@@ -93,6 +95,11 @@ function glob(zip) {
       }
   }
   return glob
+}
+
+/** @param {string} tagName */
+function needsTranslationBackfill(tagName) {
+  return tagName === "0.I" || tagName.startsWith("cdda-0.I-");
 }
 
 /**
@@ -242,11 +249,48 @@ export default async function run({ github, context, dryRun = false }) {
     (r) => !existingAllBuilds.some((b) => b.build_number === r.tag_name),
   );
 
-  // Process at most 4 missing releases per run.
-  for (const release of missingReleases.slice(0, 4)) {
+  const backfillBuilds = existingAllBuilds
+    .filter(
+      (b) =>
+        needsTranslationBackfill(b.build_number) &&
+        (b.langs?.length ?? 0) === 0,
+    )
+    .sort((a, b) => {
+      if (a.build_number === "0.I") return -1;
+      if (b.build_number === "0.I") return 1;
+      return b.created_at.localeCompare(a.created_at);
+    });
+
+  const releaseQueue = missingReleases.slice(0, maxReleasesPerRun).map(
+    (release) => ({ release, backfill: false }),
+  );
+
+  for (const build of backfillBuilds.slice(
+    0,
+    Math.max(0, maxReleasesPerRun - releaseQueue.length),
+  )) {
+    const { data: release } = await github.rest.repos.getReleaseByTag({
+      owner: "CleverRaven",
+      repo: "Cataclysm-DDA",
+      tag: build.build_number,
+    });
+    releaseQueue.push({ release, backfill: true });
+  }
+
+  const translationArtifacts = await github.rest.actions.listArtifactsForRepo({
+    owner: "CleverRaven",
+    repo: "Cataclysm-DDA",
+    name: "translations",
+    per_page: 100,
+  });
+
+  const backfilledBuilds = new Map();
+
+  // Process at most maxReleasesPerRun releases/backfills per run.
+  for (const { release, backfill } of releaseQueue) {
     const { tag_name } = release;
     const pathBase = `data/${tag_name}`;
-    console.group(`Processing ${tag_name}...`);
+    console.group(`${backfill ? "Backfilling" : "Processing"} ${tag_name}...`);
     if (forbiddenTags.includes(tag_name)) {
       console.log(`Skipping ${tag_name} because it's on the forbidden list.`);
       continue;
@@ -264,78 +308,111 @@ export default async function run({ github, context, dryRun = false }) {
     const zBuf = Buffer.from(zip)
     const globFn = glob(zBuf);
 
-    console.group("Collating base JSON...");
-    const data = [];
-    for (const f of globFn("*/data/json/**/*.json")) {
+    let data;
+    let dataMods;
+    if (backfill) {
+      console.log("Using existing all.json data for translation backfill...");
+      const allJson = JSON.parse(await fetchRawFile(`${pathBase}/all.json`));
+      data = allJson.data;
+    } else {
+      console.group("Collating base JSON...");
+      data = [];
+      for (const f of globFn("*/data/json/**/*.json")) {
         const filename = f.name;
         const objs = breakJSONIntoSingleObjects(f.data())
         for (const { obj, start, end } of objs) {
             obj.__filename = filename + `#L${start}-L${end}`;
             data.push(obj);
         }
-    }
-    console.log(`Found ${data.length} objects.`);
-    console.groupEnd();
-
-
-    console.group("Collating mods JSON...");
-    /** @type {Record<string, { info: any, data: any[] }>} */
-    const dataMods = {};
-    for (const i of globFn("*/data/mods/*/modinfo.json")) {
-      const modname = i.name.split("/")[2];
-      const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
-      if (!modInfo || modInfo.obsolete) {
-        continue;
       }
-      const modId = modInfo.id;
-      dataMods[modId] = { info: modInfo, data: [] };
-      for (const f of globFn(`*/data/mods/${modname}/**/*.json`)) {
-        const filename = f.name;
-        const objs = breakJSONIntoSingleObjects(f.data());
-        for (const { obj, start, end } of objs) {
-          if (obj.type === "MOD_INFO") continue;
-          obj.__filename = filename + `#L${start}-L${end}`;
-          dataMods[modId].data.push(obj);
+      console.log(`Found ${data.length} objects.`);
+      console.groupEnd();
+
+
+      console.group("Collating mods JSON...");
+      /** @type {Record<string, { info: any, data: any[] }>} */
+      dataMods = {};
+      for (const i of globFn("*/data/mods/*/modinfo.json")) {
+        const modname = i.name.split("/")[2];
+        const modInfo = JSON.parse(i.data()).find(i => i.type === "MOD_INFO");
+        if (!modInfo || modInfo.obsolete) {
+          continue;
+        }
+        const modId = modInfo.id;
+        dataMods[modId] = { info: modInfo, data: [] };
+        for (const f of globFn(`*/data/mods/${modname}/**/*.json`)) {
+          const filename = f.name;
+          const objs = breakJSONIntoSingleObjects(f.data());
+          for (const { obj, start, end } of objs) {
+            if (obj.type === "MOD_INFO") continue;
+            obj.__filename = filename + `#L${start}-L${end}`;
+            dataMods[modId].data.push(obj);
+          }
         }
       }
-    }
-    console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
-    console.groupEnd();
+      console.log(`Found ${Object.values(dataMods).reduce((acc, m) => acc + m.data.length, 0)} objects in ${Object.keys(dataMods).length} mods.`);
+      console.groupEnd();
 
+      const allJson = JSON.stringify({
+        build_number: tag_name,
+        release,
+        data,
+        mods: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
+      });
 
-    const allJson = JSON.stringify({
-      build_number: tag_name,
-      release,
-      data,
-      mods: Object.fromEntries(Object.entries(dataMods).map(([name, mod]) => [name, mod.info])),
-    });
+      const allModsJson = JSON.stringify(dataMods);
 
-    const allModsJson = JSON.stringify(dataMods);
+      await createBlob(`${pathBase}/all.json`, allJson);
+      await createBlob(`${pathBase}/all_mods.json`, allModsJson);
 
-    await createBlob(`${pathBase}/all.json`, allJson);
-    await createBlob(`${pathBase}/all_mods.json`, allModsJson);
-
-    // We upload a gzipped version of latest for boring GoogleBot reasons
-    // TODO: these should go in a separate branch to reduce the total size of the main branch
-    if (tag_name === latestRelease) {
-      await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
-      await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
+      // We upload a gzipped version of latest for boring GoogleBot reasons
+      // TODO: these should go in a separate branch to reduce the total size of the main branch
+      if (tag_name === latestRelease) {
+        await createBlob("data/latest.gz/all.json", zlib.gzipSync(allJson));
+        await createBlob("data/latest.gz/all_mods.json", zlib.gzipSync(allModsJson));
+      }
     }
 
     console.group("Downloading translations...");
 
-    const translationArtifacts = await github.rest.actions.listArtifactsForRepo({
-      owner: "CleverRaven",
-      repo: "Cataclysm-DDA",
-      name: "translations",
-      per_page: 100
-    });
-
     const relevantTranslationArtifact = translationArtifacts.data.artifacts.find(a => a.workflow_run?.head_sha === release.target_commitish)
 
     let langs = []
+    /**
+     * @param {(pattern: string) => Iterable<{ name: string, data: () => string }>} globFn
+     * @param {string} pattern
+     */
+    const compileLangJson = async (globFn, pattern) => Promise.all(
+      [...globFn(pattern)].map(async (f) => {
+        const lang = path.basename(f.name, ".po");
+        const json = postprocessPoJson(
+          po2json.parse(f.data()),
+        );
+        const jsonStr = JSON.stringify(json);
+        await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
+        if (tag_name === latestRelease)
+          await createBlob(
+            `data/latest.gz/lang/${lang}.json`,
+            zlib.gzipSync(jsonStr),
+          );
+
+        // To support searching Chinese translations by pinyin
+        if (lang.startsWith("zh_")) {
+          const pinyin = toPinyin(data, json);
+          const pinyinStr = JSON.stringify(pinyin);
+          await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
+          if (tag_name === latestRelease)
+            await createBlob(
+              `data/latest.gz/lang/${lang}_pinyin.json`,
+              zlib.gzipSync(pinyinStr),
+            );
+        }
+        return lang;
+      }),
+    );
+
     if (relevantTranslationArtifact) {
-      console.log("Found translations")
+      console.log("Found translations artifact")
 
       const { data: zip } = await github.rest.actions.downloadArtifact({
         owner: "CleverRaven",
@@ -345,52 +422,40 @@ export default async function run({ github, context, dryRun = false }) {
       });
       // @ts-expect-error
       const zBuf = Buffer.from(zip)
-      const globFn = glob(zBuf);
-      langs = await Promise.all(
-        [...globFn("lang/po/*.po")].map(async (f) => {
-          const lang = path.basename(f.name, ".po");
-          const json = postprocessPoJson(
-            po2json.parse(f.data()),
-          );
-          const jsonStr = JSON.stringify(json);
-          await createBlob(`${pathBase}/lang/${lang}.json`, jsonStr);
-          if (tag_name === latestRelease)
-            await createBlob(
-              `data/latest.gz/lang/${lang}.json`,
-              zlib.gzipSync(jsonStr),
-            );
-
-          // To support searching Chinese translations by pinyin
-          if (lang.startsWith("zh_")) {
-            const pinyin = toPinyin(data, json);
-            const pinyinStr = JSON.stringify(pinyin);
-            await createBlob(`${pathBase}/lang/${lang}_pinyin.json`, pinyinStr);
-            if (tag_name === latestRelease)
-              await createBlob(
-                `data/latest.gz/lang/${lang}_pinyin.json`,
-                zlib.gzipSync(pinyinStr),
-              );
-          }
-          return lang;
-        }),
-      );
+      langs = await compileLangJson(glob(zBuf), "lang/po/*.po");
       console.log(`Found ${Object.keys(langs).length} languages.`);
-    } else {
-      console.log(`No translation artifact found for ${release.target_commitish}`)
+    }
+
+    if (langs.length === 0) {
+      console.log(
+        `No usable translation artifact found for ${release.target_commitish}; falling back to source zip PO files.`,
+      );
+      langs = await compileLangJson(globFn, "*/lang/po/*.po");
+      console.log(`Found ${Object.keys(langs).length} languages in source zip.`);
     }
 
     console.groupEnd();
 
-    newBuilds.push({
-      build_number: tag_name,
-      prerelease: release.prerelease,
-      created_at: release.created_at,
-      langs,
-    });
+    if (backfill) {
+      backfilledBuilds.set(tag_name, langs);
+    } else {
+      newBuilds.push({
+        build_number: tag_name,
+        prerelease: release.prerelease,
+        created_at: release.created_at,
+        langs,
+      });
+    }
     console.groupEnd();
   }
 
-  const allBuilds = existingAllBuilds.concat(newBuilds);
+  const allBuilds = existingAllBuilds
+    .map((build) =>
+      backfilledBuilds.has(build.build_number)
+        ? { ...build, langs: backfilledBuilds.get(build.build_number) }
+        : build,
+    )
+    .concat(newBuilds);
   allBuilds.sort((a, b) => b.created_at.localeCompare(a.created_at));
   const importantBuilds = filterImportantBuilds(allBuilds);
 
@@ -462,6 +527,8 @@ export default async function run({ github, context, dryRun = false }) {
   const commitMessage =
     newBuilds.length > 0
       ? `Update data for ${allBuilds[0].build_number}`
+      : backfilledBuilds.size > 0
+      ? `Backfill translations for ${[...backfilledBuilds.keys()].join(", ")}`
       : "Refresh build indexes";
   const { data: commit } = await github.rest.git.createCommit({
     ...context.repo,
